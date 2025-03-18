@@ -197,14 +197,22 @@ async function setupContributorRole(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  if (!interaction.guild) {
+    await interaction.reply({
+      content: 'This command can only be used in a server.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   await prisma.guildConfig.upsert({
-    where: { guildId: interaction.guild!.id },
+    where: { guildId: interaction.guild?.id },
     update: {
       contributorRoleId: role.id,
       updatedAt: new Date(),
     },
     create: {
-      guildId: interaction.guild!.id,
+      guildId: interaction.guild?.id,
       contributorRoleId: role.id,
     },
   });
@@ -217,7 +225,7 @@ async function setupContributorRole(interaction: ChatInputCommandInteraction) {
 
 async function removeContributorRole(interaction: ChatInputCommandInteraction) {
   const config = await prisma.guildConfig.findUnique({
-    where: { guildId: interaction.guild!.id },
+    where: { guildId: interaction.guild?.id },
   });
 
   if (!config || !config.contributorRoleId) {
@@ -229,7 +237,7 @@ async function removeContributorRole(interaction: ChatInputCommandInteraction) {
   }
 
   await prisma.guildConfig.update({
-    where: { guildId: interaction.guild!.id },
+    where: { guildId: interaction.guild?.id },
     data: {
       contributorRoleId: null,
       updatedAt: new Date(),
@@ -253,14 +261,22 @@ async function setupStargazerRole(interaction: ChatInputCommandInteraction) {
     return;
   }
 
+  if (!interaction.guild) {
+    await interaction.reply({
+      content: 'This command can only be used in a server.',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   await prisma.guildConfig.upsert({
-    where: { guildId: interaction.guild!.id },
+    where: { guildId: interaction.guild?.id },
     update: {
       stargazerRoleId: role.id,
       updatedAt: new Date(),
     },
     create: {
-      guildId: interaction.guild!.id,
+      guildId: interaction.guild?.id,
       stargazerRoleId: role.id,
     },
   });
@@ -273,7 +289,7 @@ async function setupStargazerRole(interaction: ChatInputCommandInteraction) {
 
 async function removeStargazerRole(interaction: ChatInputCommandInteraction) {
   const config = await prisma.guildConfig.findUnique({
-    where: { guildId: interaction.guild!.id },
+    where: { guildId: interaction.guild?.id },
   });
 
   if (!config || !config.stargazerRoleId) {
@@ -285,7 +301,7 @@ async function removeStargazerRole(interaction: ChatInputCommandInteraction) {
   }
 
   await prisma.guildConfig.update({
-    where: { guildId: interaction.guild!.id },
+    where: { guildId: interaction.guild?.id },
     data: {
       stargazerRoleId: null,
       updatedAt: new Date(),
@@ -300,7 +316,7 @@ async function removeStargazerRole(interaction: ChatInputCommandInteraction) {
 
 async function showConfig(interaction: ChatInputCommandInteraction) {
   const config = await prisma.guildConfig.findUnique({
-    where: { guildId: interaction.guild!.id },
+    where: { guildId: interaction.guild?.id },
     include: {
       repositories: {
         select: {
@@ -321,7 +337,7 @@ async function showConfig(interaction: ChatInputCommandInteraction) {
   let responseMessage = 'Current configuration:\n';
 
   if (config.contributorRoleId) {
-    const contributorRole = interaction.guild!.roles.cache.get(
+    const contributorRole = interaction.guild?.roles.cache.get(
       config.contributorRoleId,
     );
     responseMessage += `• Contributor Role: ${contributorRole ? contributorRole.name : 'Unknown Role'} (ID: ${config.contributorRoleId})\n`;
@@ -330,7 +346,7 @@ async function showConfig(interaction: ChatInputCommandInteraction) {
   }
 
   if (config.stargazerRoleId) {
-    const stargazerRole = interaction.guild!.roles.cache.get(
+    const stargazerRole = interaction.guild?.roles.cache.get(
       config.stargazerRoleId,
     );
     responseMessage += `• Stargazer Role: ${stargazerRole ? stargazerRole.name : 'Unknown Role'} (ID: ${config.stargazerRoleId})\n`;
@@ -369,14 +385,22 @@ async function followRepository(interaction: ChatInputCommandInteraction) {
   }
 
   try {
+    if (!interaction.guild) {
+      await interaction.reply({
+        content: 'This command can only be used in a server.',
+        flags: MessageFlags.Ephemeral,
+      });
+      return;
+    }
+
     // Create or get guild config
     const guildConfig = await prisma.guildConfig.upsert({
-      where: { guildId: interaction.guild!.id },
+      where: { guildId: interaction.guild?.id },
       update: {
         updatedAt: new Date(),
       },
       create: {
-        guildId: interaction.guild!.id,
+        guildId: interaction.guild?.id,
       },
     });
 
@@ -385,12 +409,10 @@ async function followRepository(interaction: ChatInputCommandInteraction) {
       where: {
         guildConfigId: guildConfig.id,
         owner: {
-          equals: owner,
-          mode: 'insensitive', // Case-insensitive match
+          equals: owner.toLowerCase(),
         },
         name: {
-          equals: name,
-          mode: 'insensitive', // Case-insensitive match
+          equals: name.toLowerCase(),
         },
       },
     });
@@ -425,8 +447,8 @@ async function followRepository(interaction: ChatInputCommandInteraction) {
     // Add repository to followed list
     await prisma.followedRepository.create({
       data: {
-        owner,
-        name,
+        owner: owner.toLowerCase(),
+        name: name.toLowerCase(),
         guildConfigId: guildConfig.id,
       },
     });
@@ -459,7 +481,7 @@ async function unfollowRepository(interaction: ChatInputCommandInteraction) {
   try {
     // Find the guild config
     const guildConfig = await prisma.guildConfig.findUnique({
-      where: { guildId: interaction.guild!.id },
+      where: { guildId: interaction.guild?.id },
     });
 
     if (!guildConfig) {
@@ -475,12 +497,10 @@ async function unfollowRepository(interaction: ChatInputCommandInteraction) {
       where: {
         guildConfigId: guildConfig.id,
         owner: {
-          equals: owner,
-          mode: 'insensitive', // Case-insensitive match
+          equals: owner.toLowerCase(),
         },
         name: {
-          equals: name,
-          mode: 'insensitive', // Case-insensitive match
+          equals: name.toLowerCase(),
         },
       },
     });
@@ -509,7 +529,7 @@ async function listRepositories(interaction: ChatInputCommandInteraction) {
   try {
     // Find the guild config with repositories
     const guildConfig = await prisma.guildConfig.findUnique({
-      where: { guildId: interaction.guild!.id },
+      where: { guildId: interaction.guild?.id },
       include: {
         repositories: {
           orderBy: {

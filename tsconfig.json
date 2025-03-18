@@ -6,6 +6,8 @@
     "skipLibCheck": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "outDir": "./dist"
+    "outDir": "./dist",
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx"
   }
 }

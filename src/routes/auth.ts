@@ -10,10 +10,7 @@ export const authRoutes = new Hono();
 const DISCORD_API_URL = 'https://discord.com/api/v10';
 const GITHUB_API_URL = 'https://github.com';
 const GITHUB_API_VERSION = 'v3';
-const REDIRECT_URI_BASE =
-  process.env.NODE_ENV === 'production'
-    ? 'https://your-production-domain.com'
-    : 'http://localhost:3000';
+const REDIRECT_URI_BASE = config.baseUrl;
 
 // Discord OAuth endpoints
 authRoutes.get('/auth/discord', async (c) => {
@@ -40,6 +37,7 @@ authRoutes.get('/auth/discord', async (c) => {
 authRoutes.get('/auth/discord/callback', async (c) => {
   const { code, state } = c.req.query();
   const storedState = getCookie(c, 'discord_oauth_state');
+  const userId = getCookie(c, 'user_id');
 
   // Validate state to prevent CSRF attacks
   if (!state || !storedState || state !== storedState) {
@@ -84,16 +82,16 @@ authRoutes.get('/auth/discord/callback', async (c) => {
     const userData = await userResponse.json();
 
     // Check if Discord account already exists
-    const existingAccount = await prisma.discordAccount.findUnique({
+    const existingDiscordAccount = await prisma.discordAccount.findUnique({
       where: { discordId: userData.id },
       include: { user: true },
     });
-    let userId: string;
 
-    if (existingAccount) {
-      // Update existing Discord account
-      const updatedAccount = await prisma.discordAccount.update({
-        where: { id: existingAccount.id },
+    // Case 1: Discord account exists - login to that account
+    if (existingDiscordAccount) {
+      // Update the Discord account with fresh token
+      await prisma.discordAccount.update({
+        where: { id: existingDiscordAccount.id },
         data: {
           username: userData.username,
           discriminator: userData.discriminator ?? null,
@@ -104,41 +102,76 @@ authRoutes.get('/auth/discord/callback', async (c) => {
             : null,
           updatedAt: new Date(),
         },
-        include: { user: true },
       });
 
-      userId = updatedAccount.userId;
-    } else {
-      // Create new user and Discord account
-      const newUser = await prisma.user.create({
-        data: {
-          discordAccount: {
-            create: {
-              discordId: userData.id,
-              username: userData.username,
-              discriminator: userData.discriminator ?? null,
-              accessToken: tokenData.access_token,
-              refreshToken: tokenData.refresh_token ?? null,
-              tokenExpires: tokenData.expires_in
-                ? new Date(Date.now() + tokenData.expires_in * 1000)
-                : null,
-            },
-          },
-        },
-        include: {
-          discordAccount: true,
-        },
+      // Set user ID in cookie
+      setCookie(c, 'user_id', existingDiscordAccount.userId, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: 60 * 60 * 24 * 7, // 1 week
       });
 
-      if (!newUser.discordAccount) {
-        return c.text('Failed to create Discord account', 500);
-      }
-
-      userId = newUser.id;
+      return c.redirect('/');
     }
 
-    // Store user ID in cookie
-    setCookie(c, 'user_id', userId, {
+    // Case 2: User already logged in (has userId cookie) - link Discord to existing account
+    if (userId) {
+      // Check if the user exists
+      const existingUser = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!existingUser) {
+        // Clear invalid session
+        setCookie(c, 'user_id', '', {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          path: '/',
+          maxAge: 0,
+        });
+
+        return c.text('Invalid user session. Please try again.', 400);
+      }
+
+      // Create new Discord account linked to existing user
+      await prisma.discordAccount.create({
+        data: {
+          discordId: userData.id,
+          username: userData.username,
+          discriminator: userData.discriminator ?? null,
+          accessToken: tokenData.access_token,
+          refreshToken: tokenData.refresh_token ?? null,
+          tokenExpires: tokenData.expires_in
+            ? new Date(Date.now() + tokenData.expires_in * 1000)
+            : null,
+          user: { connect: { id: userId } },
+        },
+      });
+
+      return c.redirect('/');
+    }
+
+    // Case 3: New Discord account, no existing session - create new user
+    const newUser = await prisma.user.create({
+      data: {
+        discordAccount: {
+          create: {
+            discordId: userData.id,
+            username: userData.username,
+            discriminator: userData.discriminator ?? null,
+            accessToken: tokenData.access_token,
+            refreshToken: tokenData.refresh_token ?? null,
+            tokenExpires: tokenData.expires_in
+              ? new Date(Date.now() + tokenData.expires_in * 1000)
+              : null,
+          },
+        },
+      },
+    });
+
+    // Set user ID in cookie
+    setCookie(c, 'user_id', newUser.id, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       path: '/',
@@ -229,23 +262,16 @@ authRoutes.get('/auth/github/callback', async (c) => {
     const userData = await userResponse.json();
 
     // Check if GitHub account already exists
-    let githubAccount = await prisma.gitHubAccount.findUnique({
+    const existingGithubAccount = await prisma.gitHubAccount.findUnique({
       where: { githubId: String(userData.id) },
       include: { user: true },
     });
 
-    if (githubAccount) {
-      // If the GitHub account is already linked to a different user
-      if (userId && githubAccount.userId !== userId) {
-        return c.text(
-          'This GitHub account is already linked to another Discord account',
-          400,
-        );
-      }
-
-      // Update existing GitHub account
-      githubAccount = await prisma.gitHubAccount.update({
-        where: { id: githubAccount.id },
+    // Case 1: GitHub account exists - login to that account
+    if (existingGithubAccount) {
+      // Update the GitHub account with fresh token
+      await prisma.gitHubAccount.update({
+        where: { id: existingGithubAccount.id },
         data: {
           username: userData.login,
           accessToken: tokenData.access_token,
@@ -255,36 +281,39 @@ authRoutes.get('/auth/github/callback', async (c) => {
             : null,
           updatedAt: new Date(),
         },
-        include: { user: true },
       });
-    } else {
-      // If user is not logged in with Discord yet
-      if (!userId) {
-        // Store GitHub credentials temporarily and redirect to Discord login
-        setCookie(
-          c,
-          'github_temp_data',
-          JSON.stringify({
-            githubId: String(userData.id),
-            username: userData.login,
-            accessToken: tokenData.access_token,
-            refreshToken: tokenData.refresh_token ?? null,
-            tokenExpires: tokenData.expires_in
-              ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
-              : null,
-          }),
-          {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            path: '/',
-            maxAge: 60 * 10, // 10 minutes
-          },
-        );
 
-        return c.redirect('/auth/discord');
+      // Set user ID in cookie
+      setCookie(c, 'user_id', existingGithubAccount.userId, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: 60 * 60 * 24 * 7, // 1 week
+      });
+
+      return c.redirect('/');
+    }
+
+    // Case 2: User already logged in (has userId cookie) - link GitHub to existing account
+    if (userId) {
+      // Check if the user exists
+      const existingUser = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (!existingUser) {
+        // Clear invalid session
+        setCookie(c, 'user_id', '', {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          path: '/',
+          maxAge: 0,
+        });
+
+        return c.text('Invalid user session. Please try again.', 400);
       }
 
-      // Link GitHub account to existing user
+      // Create new GitHub account linked to existing user
       await prisma.gitHubAccount.create({
         data: {
           githubId: String(userData.id),
@@ -294,12 +323,37 @@ authRoutes.get('/auth/github/callback', async (c) => {
           tokenExpires: tokenData.expires_in
             ? new Date(Date.now() + tokenData.expires_in * 1000)
             : null,
-          user: {
-            connect: { id: userId },
-          },
+          user: { connect: { id: userId } },
         },
       });
+
+      return c.redirect('/');
     }
+
+    // Case 3: New GitHub account, no existing session - create new user
+    const newUser = await prisma.user.create({
+      data: {
+        gitHubAccount: {
+          create: {
+            githubId: String(userData.id),
+            username: userData.login,
+            accessToken: tokenData.access_token,
+            refreshToken: tokenData.refresh_token ?? null,
+            tokenExpires: tokenData.expires_in
+              ? new Date(Date.now() + tokenData.expires_in * 1000)
+              : null,
+          },
+        },
+      },
+    });
+
+    // Set user ID in cookie
+    setCookie(c, 'user_id', newUser.id, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+      maxAge: 60 * 60 * 24 * 7, // 1 week
+    });
 
     return c.redirect('/');
   } catch (error) {
@@ -308,8 +362,8 @@ authRoutes.get('/auth/github/callback', async (c) => {
   }
 });
 
-// Endpoint to unlink GitHub account
-authRoutes.post('/auth/github/unlink', async (c) => {
+// Endpoint to unlink all accounts (sign out)
+authRoutes.post('/auth/unlink', async (c) => {
   const userId = getCookie(c, 'user_id');
 
   if (!userId) {
@@ -317,28 +371,9 @@ authRoutes.post('/auth/github/unlink', async (c) => {
   }
 
   try {
-    await prisma.gitHubAccount.deleteMany({
-      where: { userId },
-    });
-
-    return c.text('GitHub account unlinked successfully');
-  } catch (error) {
-    console.error('Error unlinking GitHub account:', error);
-    return c.text('Failed to unlink GitHub account', 500);
-  }
-});
-
-// Endpoint to unlink Discord account
-authRoutes.post('/auth/discord/unlink', async (c) => {
-  const userId = getCookie(c, 'user_id');
-
-  if (!userId) {
-    return c.text('Not authenticated', 401);
-  }
-
-  try {
-    await prisma.discordAccount.deleteMany({
-      where: { userId },
+    // Delete the entire user record - cascading delete will remove associated accounts
+    await prisma.user.delete({
+      where: { id: userId },
     });
 
     // Clear session
@@ -349,11 +384,24 @@ authRoutes.post('/auth/discord/unlink', async (c) => {
       maxAge: 0,
     });
 
-    return c.text('Discord account unlinked successfully');
+    return c.redirect('/');
   } catch (error) {
-    console.error('Error unlinking Discord account:', error);
-    return c.text('Failed to unlink Discord account', 500);
+    console.error('Error unlinking accounts:', error);
+    return c.text('Failed to unlink accounts', 500);
   }
+});
+
+// Simple logout without deleting accounts
+authRoutes.get('/auth/logout', async (c) => {
+  // Clear session cookie
+  setCookie(c, 'user_id', '', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+    maxAge: 0,
+  });
+
+  return c.redirect('/');
 });
 
 // Endpoint to check current auth status

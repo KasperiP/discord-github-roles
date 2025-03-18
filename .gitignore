@@ -33,3 +33,4 @@ dist/
 # sqlite
 *.sqlite
 *.db
+*.db-journal

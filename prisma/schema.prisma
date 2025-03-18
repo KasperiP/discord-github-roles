@@ -41,3 +41,27 @@ model DiscordAccount {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
+
+model GuildConfig {
+  id                String               @id @default(cuid())
+  guildId           String               @unique
+  contributorRoleId String?
+  stargazerRoleId   String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  repositories      FollowedRepository[]
+}
+
+model FollowedRepository {
+  id        String   @id @default(cuid())
+  owner     String // Repository owner (username or organization)
+  name      String // Repository name
+  createdAt DateTime @default(now())
+
+  // Relation to GuildConfig
+  guildConfigId String
+  guildConfig   GuildConfig @relation(fields: [guildConfigId], references: [id], onDelete: Cascade)
+
+  // Composite unique constraint to prevent duplicates per guild
+  @@unique([guildConfigId, owner, name])
+}

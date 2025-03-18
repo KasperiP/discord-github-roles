@@ -8,8 +8,10 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.13.8",
+    "@prisma/client": "^6.5.0",
     "discord.js": "^14.18.0",
-    "hono": "^4.7.4"
+    "hono": "^4.7.4",
+    "nanoid": "^5.1.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
@@ -18,8 +20,17 @@
     "eslint-config-prettier": "^10.0.2",
     "eslint-plugin-prettier": "^5.2.3",
     "prettier": "^3.5.3",
+    "prisma": "^6.5.0",
     "tsx": "^4.7.1",
     "typescript": "^5.8.2",
     "typescript-eslint": "^8.26.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "esbuild",
+      "prisma"
+    ]
   }
 }

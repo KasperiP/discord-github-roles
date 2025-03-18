@@ -2,8 +2,16 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import 'dotenv/config';
 import { createBot } from './bot/bot';
+import { authRoutes } from './routes/auth';
+import { PrismaClient } from '@prisma/client';
+
+// Initialize Prisma client
+export const prisma = new PrismaClient();
 
 const app = new Hono();
+
+// Register auth routes
+app.route('', authRoutes);
 
 app.get('/', (c) => {
   return c.text('Hello Hono!');

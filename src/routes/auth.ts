@@ -89,17 +89,11 @@ authRoutes.get('/auth/discord/callback', async (c) => {
 
     // Case 1: Discord account exists - login to that account
     if (existingDiscordAccount) {
-      // Update the Discord account with fresh token
+      // Update the Discord account with fresh username if needed
       await prisma.discordAccount.update({
         where: { id: existingDiscordAccount.id },
         data: {
           username: userData.username,
-          discriminator: userData.discriminator ?? null,
-          accessToken: tokenData.access_token,
-          refreshToken: tokenData.refresh_token ?? null,
-          tokenExpires: tokenData.expires_in
-            ? new Date(Date.now() + tokenData.expires_in * 1000)
-            : null,
           updatedAt: new Date(),
         },
       });
@@ -139,12 +133,6 @@ authRoutes.get('/auth/discord/callback', async (c) => {
         data: {
           discordId: userData.id,
           username: userData.username,
-          discriminator: userData.discriminator ?? null,
-          accessToken: tokenData.access_token,
-          refreshToken: tokenData.refresh_token ?? null,
-          tokenExpires: tokenData.expires_in
-            ? new Date(Date.now() + tokenData.expires_in * 1000)
-            : null,
           user: { connect: { id: userId } },
         },
       });
@@ -159,12 +147,6 @@ authRoutes.get('/auth/discord/callback', async (c) => {
           create: {
             discordId: userData.id,
             username: userData.username,
-            discriminator: userData.discriminator ?? null,
-            accessToken: tokenData.access_token,
-            refreshToken: tokenData.refresh_token ?? null,
-            tokenExpires: tokenData.expires_in
-              ? new Date(Date.now() + tokenData.expires_in * 1000)
-              : null,
           },
         },
       },
@@ -269,16 +251,11 @@ authRoutes.get('/auth/github/callback', async (c) => {
 
     // Case 1: GitHub account exists - login to that account
     if (existingGithubAccount) {
-      // Update the GitHub account with fresh token
+      // Update the GitHub account with fresh username if needed
       await prisma.gitHubAccount.update({
         where: { id: existingGithubAccount.id },
         data: {
           username: userData.login,
-          accessToken: tokenData.access_token,
-          refreshToken: tokenData.refresh_token ?? null,
-          tokenExpires: tokenData.expires_in
-            ? new Date(Date.now() + tokenData.expires_in * 1000)
-            : null,
           updatedAt: new Date(),
         },
       });
@@ -318,11 +295,6 @@ authRoutes.get('/auth/github/callback', async (c) => {
         data: {
           githubId: String(userData.id),
           username: userData.login,
-          accessToken: tokenData.access_token,
-          refreshToken: tokenData.refresh_token ?? null,
-          tokenExpires: tokenData.expires_in
-            ? new Date(Date.now() + tokenData.expires_in * 1000)
-            : null,
           user: { connect: { id: userId } },
         },
       });
@@ -337,11 +309,6 @@ authRoutes.get('/auth/github/callback', async (c) => {
           create: {
             githubId: String(userData.id),
             username: userData.login,
-            accessToken: tokenData.access_token,
-            refreshToken: tokenData.refresh_token ?? null,
-            tokenExpires: tokenData.expires_in
-              ? new Date(Date.now() + tokenData.expires_in * 1000)
-              : null,
           },
         },
       },

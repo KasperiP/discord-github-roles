@@ -7,11 +7,15 @@ import { PrismaClient } from '@prisma/client';
 import { jsxRenderer } from 'hono/jsx-renderer';
 import { IndexPage } from './pages/IndexPage';
 import { getCookie } from 'hono/cookie';
+import { serveStatic } from '@hono/node-server/serve-static';
 
 // Initialize Prisma client
 export const prisma = new PrismaClient();
 
 const app = new Hono();
+
+// Serve static files from the public directory
+app.use('/*', serveStatic({ root: './public' }));
 
 // Set up JSX renderer
 app.use(
@@ -22,8 +26,7 @@ app.use(
           <meta charset="UTF-8" />
           <meta name="viewport" content="width=device-width, initial-scale=1.0" />
           <title>GitHub & Discord Linking</title>
-          <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css" />
-          <script src="https://cdn.tailwindcss.com"></script>
+          <link rel="stylesheet" href="/styles.css" />
         </head>
         <body>{children}</body>
       </html>

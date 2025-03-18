@@ -19,14 +19,11 @@ model User {
 }
 
 model GitHubAccount {
-  id           String    @id @default(cuid())
-  githubId     String    @unique
-  username     String
-  accessToken  String
-  refreshToken String?
-  tokenExpires DateTime?
-  connectedAt  DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id          String   @id @default(cuid())
+  githubId    String   @unique
+  username    String
+  connectedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   // Relation to User (one-to-one)
   userId String @unique
@@ -34,15 +31,11 @@ model GitHubAccount {
 }
 
 model DiscordAccount {
-  id            String    @id @default(cuid())
-  discordId     String    @unique
-  username      String
-  discriminator String?
-  accessToken   String
-  refreshToken  String?
-  tokenExpires  DateTime?
-  connectedAt   DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id          String   @id @default(cuid())
+  discordId   String   @unique
+  username    String
+  connectedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   // Relation to User (one-to-one)
   userId String @unique

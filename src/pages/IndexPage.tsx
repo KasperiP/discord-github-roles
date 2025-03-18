@@ -124,9 +124,7 @@ export const IndexPage: FC<IndexPageProps> = ({ user, error }) => {
             <div class="info-banner">
               <h3>What Happens Next?</h3>
               <p>
-                Once you've connected both accounts, you'll automatically receive 
-                the appropriate roles in our Discord server based on your GitHub
-                organization membership and contributions.
+              Once you have connected both accounts, you will automatically receive the appropriate roles in the Discord server based on your Stargazer and Contributor status for the specific GitHub repository. <strong>Role syncing may take up to 15 minutes.</strong>
               </p>
               
               <button 

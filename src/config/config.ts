@@ -7,8 +7,14 @@ export const config = {
   github: {
     clientId: process.env.GITHUB_CLIENT_ID || '',
     clientSecret: process.env.GITHUB_CLIENT_SECRET || '',
+    syncToken: process.env.GITHUB_SYNC_TOKEN || '',
   },
   baseUrl: process.env.BASE_URL || 'http://localhost:3000',
+  scheduler: {
+    syncIntervalHours: process.env.SYNC_INTERVAL_HOURS
+      ? parseInt(process.env.SYNC_INTERVAL_HOURS)
+      : 6,
+  },
 };
 
 function validateConfig() {

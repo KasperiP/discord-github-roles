@@ -11,7 +11,9 @@
     "@prisma/client": "^6.5.0",
     "discord.js": "^14.18.0",
     "hono": "^4.7.4",
+    "lru-cache": "^11.0.2",
     "nanoid": "^5.1.4",
+    "p-throttle": "^7.0.0",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0"
   },

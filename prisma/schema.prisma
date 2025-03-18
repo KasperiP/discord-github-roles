@@ -50,6 +50,7 @@ model GuildConfig {
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
   repositories      FollowedRepository[]
+  syncHistory       GuildSyncHistory[]
 }
 
 model FollowedRepository {
@@ -64,4 +65,60 @@ model FollowedRepository {
 
   // Composite unique constraint to prevent duplicates per guild
   @@unique([guildConfigId, owner, name])
+}
+
+// Models for tracking sync status and history
+model GuildSyncHistory {
+  id             String      @id @default(cuid())
+  guildConfigId  String
+  guildConfig    GuildConfig @relation(fields: [guildConfigId], references: [id], onDelete: Cascade)
+  startedAt      DateTime    @default(now())
+  completedAt    DateTime?
+  success        Boolean     @default(false)
+  errorMessage   String?
+  totalProcessed Int         @default(0)
+  rolesAdded     Int         @default(0)
+  rolesRemoved   Int         @default(0)
+}
+
+model RepositorySyncState {
+  id                  String    @id @default(cuid())
+  repositoryFullName  String    @unique
+  lastContributorSync DateTime?
+  lastStargazerSync   DateTime?
+  contributorEtag     String?
+  stargazerEtag       String?
+  lastSyncError       String?
+
+  // New relations
+  cachedContributors ContributorCache[]
+  cachedStargazers   StargazerCache[]
+}
+
+model ContributorCache {
+  id                 String   @id @default(cuid())
+  repositoryFullName String
+  username           String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // Relations
+  repository RepositorySyncState @relation(fields: [repositoryFullName], references: [repositoryFullName], onDelete: Cascade)
+
+  @@index([repositoryFullName])
+  @@index([username])
+}
+
+model StargazerCache {
+  id                 String   @id @default(cuid())
+  repositoryFullName String
+  username           String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // Relations
+  repository RepositorySyncState @relation(fields: [repositoryFullName], references: [repositoryFullName], onDelete: Cascade)
+
+  @@index([repositoryFullName])
+  @@index([username])
 }

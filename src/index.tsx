@@ -8,7 +8,9 @@ import { jsxRenderer } from 'hono/jsx-renderer';
 import { IndexPage } from './pages/IndexPage';
 import { getCookie, setCookie } from 'hono/cookie';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { createChildLogger } from './utils/logger';
+import { createChildLogger, logError } from './utils/logger';
+import { config } from './config/config';
+import { Scheduler } from './scheduler/scheduler';
 
 const log = createChildLogger('app');
 
@@ -105,8 +107,46 @@ if (!process.env.DISCORD_TOKEN) {
   throw new Error('DISCORD_TOKEN is required');
 }
 
+// Create and initialize the Discord bot
 try {
-  createBot(process.env.DISCORD_TOKEN);
+  const client = createBot(process.env.DISCORD_TOKEN);
+  
+  // Initialize scheduler when the client is ready
+  client.once('ready', () => {
+    try {
+      // Create the scheduler with configured interval
+      const scheduler = new Scheduler(
+        client,
+        config.scheduler.syncIntervalHours
+      );
+      
+      // Start the scheduler
+      scheduler.start();
+      
+      log.info(
+        { syncIntervalHours: config.scheduler.syncIntervalHours },
+        'Role sync scheduler started'
+      );
+      
+      // Expose scheduler for potential use in API endpoints
+      app.get('/api/sync', async (c) => {
+        // Only allow this in development or with proper authentication in production
+        if (process.env.NODE_ENV !== 'production') {
+          try {
+            await scheduler.triggerSync();
+            return c.json({ success: true, message: 'Manual sync triggered' });
+          } catch (error) {
+            logError(log, 'Error triggering manual sync', error);
+            return c.json({ success: false, error: 'Failed to trigger sync' }, 500);
+          }
+        } else {
+          return c.json({ success: false, error: 'Not authorized' }, 403);
+        }
+      });
+    } catch (error) {
+      logError(log, 'Failed to initialize scheduler', error);
+    }
+  });
 } catch (error) {
   log.fatal({ 
     error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error)

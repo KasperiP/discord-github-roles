@@ -3,6 +3,10 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { nanoid } from 'nanoid';
 import { prisma } from '../index';
 import { config } from '../config/config';
+import { createChildLogger, logError } from '../utils/logger';
+
+// Create a logger instance for the auth component
+const log = createChildLogger('auth');
 
 export const authRoutes = new Hono();
 
@@ -31,6 +35,7 @@ authRoutes.get('/auth/discord', async (c) => {
     scope: 'identify',
   });
 
+  log.info({ state }, 'Initiating Discord OAuth flow');
   return c.redirect(`${DISCORD_API_URL}/oauth2/authorize?${params.toString()}`);
 });
 
@@ -39,8 +44,17 @@ authRoutes.get('/auth/discord/callback', async (c) => {
   const storedState = getCookie(c, 'discord_oauth_state');
   const userId = getCookie(c, 'user_id');
 
+  const callbackLog = log.child({
+    state,
+    hasStoredState: !!storedState,
+    hasExistingUserId: !!userId,
+  });
+
+  callbackLog.info('Processing Discord OAuth callback');
+
   // Validate state to prevent CSRF attacks
   if (!state || !storedState || state !== storedState) {
+    callbackLog.warn('Invalid state parameter in Discord callback');
     return c.text('Invalid state parameter', 400);
   }
 
@@ -62,11 +76,19 @@ authRoutes.get('/auth/discord/callback', async (c) => {
 
     if (!tokenResponse.ok) {
       const errorData = await tokenResponse.text();
-      console.error('Discord token error:', errorData);
+      logError(
+        callbackLog,
+        'Discord token exchange error',
+        new Error(errorData),
+        {
+          status: tokenResponse.status,
+        },
+      );
       return c.text('Failed to exchange code for token', 500);
     }
 
     const tokenData = await tokenResponse.json();
+    callbackLog.debug('Successfully obtained Discord access token');
 
     // Get user info from Discord
     const userResponse = await fetch(`${DISCORD_API_URL}/users/@me`, {
@@ -76,10 +98,23 @@ authRoutes.get('/auth/discord/callback', async (c) => {
     });
 
     if (!userResponse.ok) {
+      logError(
+        callbackLog,
+        'Failed to get user info from Discord',
+        new Error('API Error'),
+        {
+          status: userResponse.status,
+        },
+      );
       return c.text('Failed to get user info', 500);
     }
 
     const userData = await userResponse.json();
+    const userLog = callbackLog.child({
+      discordId: userData.id,
+      discordUsername: userData.username,
+    });
+    userLog.info('Retrieved Discord user data');
 
     // Check if Discord account already exists
     const existingDiscordAccount = await prisma.discordAccount.findUnique({
@@ -89,6 +124,10 @@ authRoutes.get('/auth/discord/callback', async (c) => {
 
     // Case 1: Discord account exists - login to that account
     if (existingDiscordAccount) {
+      userLog.info(
+        { existingUserId: existingDiscordAccount.userId },
+        'Found existing Discord account',
+      );
       // Update the Discord account with fresh username if needed
       await prisma.discordAccount.update({
         where: { id: existingDiscordAccount.id },
@@ -106,6 +145,7 @@ authRoutes.get('/auth/discord/callback', async (c) => {
         maxAge: 60 * 60 * 24 * 7, // 1 week
       });
 
+      userLog.info('Successfully logged in with existing Discord account');
       return c.redirect('/');
     }
 
@@ -162,7 +202,7 @@ authRoutes.get('/auth/discord/callback', async (c) => {
 
     return c.redirect('/');
   } catch (error) {
-    console.error('Discord OAuth error:', error);
+    logError(callbackLog, 'Discord OAuth error', error);
     return c.text('Authentication failed', 500);
   }
 });

@@ -10,6 +10,9 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { prisma } from '../index';
+import { createChildLogger, logError } from '../utils/logger';
+
+const log = createChildLogger('bot');
 
 // Define command builders
 const commands = [
@@ -99,27 +102,47 @@ export function createBot(token: string) {
 
   // Register commands when bot is ready
   client.once(Events.ClientReady, async (readyClient) => {
-    console.log(`Ready! Logged in as ${readyClient.user.tag}`);
+    log.info(
+      { username: readyClient.user.tag },
+      `Ready! Logged in as ${readyClient.user.tag}`,
+    );
 
     // Register slash commands with Discord API
     const rest = new REST({ version: '10' }).setToken(token);
 
     try {
-      console.log('Started refreshing application (/) commands.');
+      log.info('Started refreshing application (/) commands.');
 
       await rest.put(Routes.applicationCommands(readyClient.user.id), {
         body: commands,
       });
 
-      console.log('Successfully reloaded application (/) commands.');
+      log.info('Successfully reloaded application (/) commands.');
     } catch (error) {
-      console.error('Error refreshing application commands:', error);
+      logError(log, 'Error refreshing application commands', error, {
+        userId: readyClient.user.id,
+      });
     }
+  });
+
+  // Error handler for client
+  client.on('error', (error) => {
+    logError(log, 'Discord client error occurred', error);
   });
 
   // Handle interaction events (commands)
   client.on(Events.InteractionCreate, async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
+
+    const { commandName, user, guildId } = interaction;
+    const startTime = Date.now();
+    const commandLog = log.child({
+      command: commandName,
+      userId: user.id,
+      guildId,
+    });
+
+    commandLog.info('Command received');
 
     // Verify that the command is being used in a guild (server)
     if (!interaction.guild) {
@@ -127,6 +150,7 @@ export function createBot(token: string) {
         content: 'This command can only be used in a server.',
         flags: MessageFlags.Ephemeral,
       });
+      commandLog.warn('Command used outside of guild');
       return;
     }
 
@@ -138,10 +162,9 @@ export function createBot(token: string) {
         content: 'You need administrator permissions to use this command.',
         flags: MessageFlags.Ephemeral,
       });
+      commandLog.warn('Command used without required permissions');
       return;
     }
-
-    const { commandName } = interaction;
 
     try {
       switch (commandName) {
@@ -169,19 +192,58 @@ export function createBot(token: string) {
         case 'list-repositories':
           await listRepositories(interaction);
           break;
+        default:
+          commandLog.warn('Unknown command received');
+          await interaction.reply({
+            content: 'Unknown command. Please try again or contact support.',
+            flags: MessageFlags.Ephemeral,
+          });
       }
+
+      const executionTime = Date.now() - startTime;
+      commandLog.info(
+        { executionTimeMs: executionTime },
+        'Command executed successfully',
+      );
     } catch (error) {
-      console.error(`Error handling command ${commandName}:`, error);
-      await interaction
-        .reply({
-          content: 'An error occurred while processing your command.',
-          flags: MessageFlags.Ephemeral,
-        })
-        .catch(console.error);
+      const errorId = Math.random().toString(36).substring(2, 10);
+      logError(commandLog, `Error handling command ${commandName}`, error, {
+        errorId,
+      });
+
+      // Make sure the interaction hasn't been replied to already
+      if (interaction.replied || interaction.deferred) {
+        try {
+          await interaction.followUp({
+            content: `An error occurred while processing your command. Error reference: ${errorId}`,
+            flags: MessageFlags.Ephemeral,
+          });
+        } catch (followUpError) {
+          logError(commandLog, 'Failed to send error followUp', followUpError, {
+            originalErrorId: errorId,
+          });
+        }
+      } else {
+        try {
+          await interaction.reply({
+            content: `An error occurred while processing your command. Error reference: ${errorId}`,
+            flags: MessageFlags.Ephemeral,
+          });
+        } catch (replyError) {
+          logError(commandLog, 'Failed to send error reply', replyError, {
+            originalErrorId: errorId,
+          });
+        }
+      }
     }
   });
 
-  client.login(token);
+  // Add login error handling
+  client.login(token).catch((error) => {
+    logError(log, 'Failed to login to Discord', error);
+    process.exit(1); // Exit the process on login failure
+  });
+
   return client;
 }
 
@@ -363,15 +425,44 @@ async function showConfig(interaction: ChatInputCommandInteraction) {
   });
 }
 
+// Add error handling wrapper for database operations
+async function performDatabaseOperation<T>(
+  operation: () => Promise<T>,
+  errorMessage: string,
+  context: Record<string, unknown> = {},
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    const dbLog = log.child(context);
+    logError(dbLog, errorMessage, error);
+    throw new Error(
+      `${errorMessage}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+// Update each command handler with improved error handling - here's an example for followRepository:
 async function followRepository(interaction: ChatInputCommandInteraction) {
   const owner = interaction.options.getString('owner', true);
   const name = interaction.options.getString('name', true);
+  const guildId = interaction.guild?.id;
+  const userId = interaction.user.id;
+
+  const repoLog = log.child({
+    command: 'follow-repository',
+    owner,
+    name,
+    guildId,
+    userId,
+  });
 
   if (!owner || !name) {
     await interaction.reply({
       content: 'Please provide both repository owner and name.',
       flags: MessageFlags.Ephemeral,
     });
+    repoLog.warn('Missing repository parameters');
     return;
   }
 
@@ -381,11 +472,12 @@ async function followRepository(interaction: ChatInputCommandInteraction) {
       content: 'Invalid repository owner or name format.',
       flags: MessageFlags.Ephemeral,
     });
+    repoLog.warn('Invalid repository format');
     return;
   }
 
   try {
-    if (!interaction.guild) {
+    if (!guildId) {
       await interaction.reply({
         content: 'This command can only be used in a server.',
         flags: MessageFlags.Ephemeral,
@@ -393,76 +485,142 @@ async function followRepository(interaction: ChatInputCommandInteraction) {
       return;
     }
 
-    // Create or get guild config
-    const guildConfig = await prisma.guildConfig.upsert({
-      where: { guildId: interaction.guild?.id },
-      update: {
-        updatedAt: new Date(),
-      },
-      create: {
-        guildId: interaction.guild?.id,
-      },
+    // Show a "thinking" state while processing
+    await interaction.deferReply({
+      flags: MessageFlags.Ephemeral,
     });
+
+    // Create or get guild config
+    const guildConfig = await performDatabaseOperation(
+      () =>
+        prisma.guildConfig.upsert({
+          where: { guildId: guildId },
+          update: {
+            updatedAt: new Date(),
+          },
+          create: {
+            guildId: guildId,
+          },
+        }),
+      'Failed to create or update guild config',
+      { command: 'follow-repository', guildId },
+    );
 
     // Check if repository is already being followed
-    const existingRepo = await prisma.followedRepository.findFirst({
-      where: {
-        guildConfigId: guildConfig.id,
-        owner: {
-          equals: owner.toLowerCase(),
-        },
-        name: {
-          equals: name.toLowerCase(),
-        },
-      },
-    });
+    const existingRepo = await performDatabaseOperation(
+      () =>
+        prisma.followedRepository.findFirst({
+          where: {
+            guildConfigId: guildConfig.id,
+            owner: {
+              equals: owner.toLowerCase(),
+            },
+            name: {
+              equals: name.toLowerCase(),
+            },
+          },
+        }),
+      'Failed to check if repository exists',
+      { owner, name, guildId },
+    );
 
     if (existingRepo) {
-      await interaction.reply({
+      await interaction.editReply({
         content: `Repository ${owner}/${name} is already being followed.`,
-        flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
     // Try to validate if repository exists
-    const repoCheckResponse = await fetch(
-      `https://api.github.com/repos/${owner}/${name}`,
-      {
-        headers: {
-          Accept: 'application/vnd.github.v3+json',
-          'User-Agent': 'discord-github-roles',
+    try {
+      const repoCheckResponse = await fetch(
+        `https://api.github.com/repos/${owner}/${name}`,
+        {
+          headers: {
+            Accept: 'application/vnd.github.v3+json',
+            'User-Agent': 'discord-github-roles',
+          },
         },
-      },
-    );
+      );
 
-    if (!repoCheckResponse.ok) {
-      await interaction.reply({
-        content: `Repository ${owner}/${name} doesn't seem to exist or is not accessible. Please check the name and try again.`,
-        flags: MessageFlags.Ephemeral,
+      if (!repoCheckResponse.ok) {
+        const errorData = await repoCheckResponse.json().catch(() => ({}));
+        log.warn('GitHub API reported repository does not exist', {
+          owner,
+          name,
+          statusCode: repoCheckResponse.status,
+          response: errorData,
+        });
+
+        await interaction.editReply({
+          content: `Repository ${owner}/${name} doesn't seem to exist or is not accessible. Please check the name and try again.`,
+        });
+        return;
+      }
+    } catch (fetchError) {
+      log.error('Failed to fetch repository from GitHub API', {
+        owner,
+        name,
+        error:
+          fetchError instanceof Error
+            ? { message: fetchError.message, stack: fetchError.stack }
+            : String(fetchError),
+      });
+
+      await interaction.editReply({
+        content: `Unable to verify repository ${owner}/${name}. GitHub API may be unavailable. Please try again later.`,
       });
       return;
     }
 
     // Add repository to followed list
-    await prisma.followedRepository.create({
-      data: {
-        owner: owner.toLowerCase(),
-        name: name.toLowerCase(),
-        guildConfigId: guildConfig.id,
-      },
-    });
+    await performDatabaseOperation(
+      () =>
+        prisma.followedRepository.create({
+          data: {
+            owner: owner.toLowerCase(),
+            name: name.toLowerCase(),
+            guildConfigId: guildConfig.id,
+          },
+        }),
+      'Failed to add repository to database',
+      { owner, name, guildId },
+    );
 
-    await interaction.reply({
+    repoLog.info('New repository followed');
+    await interaction.editReply({
       content: `Now following GitHub repository: ${owner}/${name}`,
-      flags: MessageFlags.Ephemeral,
     });
   } catch (error) {
-    console.error('Error following repository:', error);
-    await interaction.reply({
-      content: `Failed to follow repository ${owner}/${name}. Please try again later.`,
-      flags: MessageFlags.Ephemeral,
-    });
+    logError(repoLog, 'Error following repository', error);
+
+    // Make sure we reply to the user
+    if (interaction.deferred) {
+      await interaction
+        .editReply({
+          content: `Failed to follow repository ${owner}/${name}. Please try again later.`,
+        })
+        .catch((e) => {
+          log.error('Failed to edit reply with error message', {
+            originalError:
+              error instanceof Error ? error.message : String(error),
+            replyError: e instanceof Error ? e.message : String(e),
+          });
+        });
+    } else {
+      await interaction
+        .reply({
+          content: `Failed to follow repository ${owner}/${name}. Please try again later.`,
+          flags: MessageFlags.Ephemeral,
+        })
+        .catch((e) => {
+          log.error('Failed to reply with error message', {
+            originalError:
+              error instanceof Error ? error.message : String(error),
+            replyError: e instanceof Error ? e.message : String(e),
+          });
+        });
+    }
   }
 }
 

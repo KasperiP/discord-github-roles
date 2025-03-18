@@ -127,22 +127,6 @@ try {
         { syncIntervalHours: config.scheduler.syncIntervalHours },
         'Role sync scheduler started'
       );
-      
-      // Expose scheduler for potential use in API endpoints
-      app.get('/api/sync', async (c) => {
-        // Only allow this in development or with proper authentication in production
-        if (process.env.NODE_ENV !== 'production') {
-          try {
-            await scheduler.triggerSync();
-            return c.json({ success: true, message: 'Manual sync triggered' });
-          } catch (error) {
-            logError(log, 'Error triggering manual sync', error);
-            return c.json({ success: false, error: 'Failed to trigger sync' }, 500);
-          }
-        } else {
-          return c.json({ success: false, error: 'Not authorized' }, 403);
-        }
-      });
     } catch (error) {
       logError(log, 'Failed to initialize scheduler', error);
     }

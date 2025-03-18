@@ -511,6 +511,10 @@ export class RoleSyncService {
     // Add role if needed
     if (isStargazer && !hasRole) {
       try {
+        log.debug(
+          { user: member.user.tag, githubUsername },
+          'Adding stargazer role - user stars at least one repository',
+        );
         await member.roles.add(stargazerRole, 'GitHub stargazer role sync');
         added = 1;
       } catch (error) {
@@ -524,6 +528,10 @@ export class RoleSyncService {
     // Remove role if needed
     else if (!isStargazer && hasRole) {
       try {
+        log.debug(
+          { user: member.user.tag, githubUsername },
+          'Removing stargazer role - user no longer stars any repositories',
+        );
         await member.roles.remove(stargazerRole, 'GitHub stargazer role sync');
         removed = 1;
       } catch (error) {

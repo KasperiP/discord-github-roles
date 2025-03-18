@@ -379,45 +379,104 @@ export class GitHubApiClient {
   }
 
   /**
-   * Get stargazers for a repository
+   * Get stargazers for a repository with pagination support
    */
   async getRepositoryStargazers(owner: string, repo: string, etag?: string) {
     const endpoint = `/repos/${owner}/${repo}/stargazers`;
 
     try {
-      const {
-        data,
-        etag: newEtag,
-        notModified,
-      } = await this.request<GitHubStargazer[]>(
-        endpoint,
-        {
-          headers: {
-            // Request for simple stargazer list
-            Accept: 'application/vnd.github.v3.star+json',
-          },
+      const response = await throttledFetch(`${this.baseUrl}${endpoint}`, {
+        headers: {
+          ...this.headers,
+          // Request for simple stargazer list
+          Accept: 'application/vnd.github.v3.star+json',
+          ...(etag ? { 'If-None-Match': etag } : {}),
         },
-        true,
-        etag,
-      );
+      });
 
-      if (notModified) {
+      // Update rate limit information from headers
+      this.updateRateLimitFromHeaders(response.headers);
+
+      const responseEtag = response.headers.get('ETag') || undefined;
+
+      // Handle 304 Not Modified (when using etags)
+      if (response.status === 304) {
         log.info({ owner, repo }, 'Stargazers not modified since last sync');
-        return { stargazers: null, etag: newEtag, notModified };
+        return { stargazers: null, etag: responseEtag, notModified: true };
       }
 
+      // Handle other response errors
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(`GitHub API error: ${response.status} - ${errorData}`);
+      }
+
+      // Get the data from the response
+      const data = (await response.json()) as GitHubStargazer[];
+
       // Map to an array of usernames/logins
-      const stargazers =
-        data?.map((star) => star.user.login.toLowerCase()) || [];
+      let stargazers = data.map((star) => star.user.login.toLowerCase()) || [];
+
+      // Handle pagination to ensure we get ALL stargazers
+      let nextUrl = this.getNextPageUrl(response.headers.get('Link'));
+      while (nextUrl) {
+        log.debug({ owner, repo, nextUrl }, 'Fetching next page of stargazers');
+
+        const nextResponse = await throttledFetch(nextUrl, {
+          headers: this.headers,
+        });
+
+        if (!nextResponse.ok) {
+          const errorData = await nextResponse.text();
+          throw new Error(
+            `GitHub API error: ${nextResponse.status} - ${errorData}`,
+          );
+        }
+
+        const nextData = (await nextResponse.json()) as GitHubStargazer[];
+
+        if (nextData && nextData.length > 0) {
+          // Add stargazers from this page
+          stargazers = [
+            ...stargazers,
+            ...nextData.map((star) => star.user.login.toLowerCase()),
+          ];
+
+          // Get next page URL
+          nextUrl = this.getNextPageUrl(nextResponse.headers.get('Link'));
+        } else {
+          break;
+        }
+      }
+
       log.info(
         { owner, repo, count: stargazers.length },
         'Retrieved repository stargazers',
       );
 
-      return { stargazers, etag: newEtag, notModified: false };
+      return { stargazers, etag: responseEtag, notModified: false };
     } catch (error) {
       logError(log, `Failed to get stargazers for ${owner}/${repo}`, error);
       throw error;
     }
+  }
+
+  /**
+   * Extract next page URL from Link header
+   */
+  private getNextPageUrl(linkHeader: string | null): string | null {
+    if (!linkHeader) return null;
+
+    // Parse the Link header
+    const links = linkHeader.split(',');
+    for (const link of links) {
+      const [url, rel] = link.split(';');
+      if (rel.trim() === 'rel="next"') {
+        // Extract URL from the angle brackets
+        return url.trim().slice(1, -1);
+      }
+    }
+
+    return null;
   }
 }

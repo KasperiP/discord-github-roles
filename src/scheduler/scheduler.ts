@@ -7,15 +7,15 @@ const log = createChildLogger('scheduler');
 
 // Scheduling constants
 const DEFAULT_SYNC_INTERVAL_HOURS = 0.25; // 15 minutes
-const INITIAL_DELAY_MS = 0; // Start immediately
-const SYNC_ERROR_RETRY_MS = 1000 * 60 * 30; // 30 minutes on error
+const INITIAL_DELAY_MS = 5000; // Short delay before first sync to allow app initialization
 
 export class Scheduler {
   private discordClient: Client;
   private roleSyncService: RoleSyncService;
   private syncIntervalMs: number;
-  private syncTimer: NodeJS.Timeout | null = null;
+  private syncInterval: NodeJS.Timeout | null = null;
   private isRunning = false;
+  private lastSyncTime = 0;
 
   constructor(discordClient: Client, syncIntervalHours?: number) {
     this.discordClient = discordClient;
@@ -38,7 +38,7 @@ export class Scheduler {
    * Start the scheduler
    */
   start() {
-    if (this.syncTimer) {
+    if (this.syncInterval) {
       log.warn('Scheduler already running, not starting again');
       return;
     }
@@ -46,7 +46,22 @@ export class Scheduler {
     log.info({ initialDelayMs: INITIAL_DELAY_MS }, 'Starting scheduler');
 
     // Schedule first sync after a short delay to allow the app to fully initialize
-    this.syncTimer = setTimeout(() => this.runSync(), INITIAL_DELAY_MS);
+    setTimeout(() => {
+      // Run the first sync
+      this.runSync();
+
+      // Then set up the regular interval
+      this.syncInterval = setInterval(
+        () => this.runSync(),
+        this.syncIntervalMs,
+      );
+
+      log.info(
+        { intervalMs: this.syncIntervalMs },
+        'Regular sync interval established',
+      );
+    }, INITIAL_DELAY_MS);
+
     this.isRunning = true;
   }
 
@@ -54,9 +69,9 @@ export class Scheduler {
    * Stop the scheduler
    */
   stop() {
-    if (this.syncTimer) {
-      clearTimeout(this.syncTimer);
-      this.syncTimer = null;
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+      this.syncInterval = null;
       this.isRunning = false;
       log.info('Scheduler stopped');
     }
@@ -66,21 +81,25 @@ export class Scheduler {
    * Run a single sync operation
    */
   private async runSync() {
-    // Clear the existing timer
-    if (this.syncTimer) {
-      clearTimeout(this.syncTimer);
-      this.syncTimer = null;
-    }
-
     // Don't run if the Discord client isn't ready
     if (!this.discordClient.isReady()) {
-      log.warn('Discord client not ready, rescheduling sync');
-      this.syncTimer = setTimeout(() => this.runSync(), 60000); // Try again in 1 minute
+      log.warn('Discord client not ready, skipping this sync cycle');
       return;
     }
 
+    // Ensure we don't have overlapping syncs
+    const now = Date.now();
+    if (now - this.lastSyncTime < this.syncIntervalMs * 0.9) {
+      log.warn('Previous sync operation still too recent, skipping this cycle');
+      return;
+    }
+
+    this.lastSyncTime = now;
+
     try {
-      log.info('Starting scheduled sync');
+      log.info(
+        'Starting scheduled sync - will update roles based on current GitHub data',
+      );
       const startTime = Date.now();
 
       // Run the sync process
@@ -89,16 +108,20 @@ export class Scheduler {
       const duration = Date.now() - startTime;
       log.info(
         { durationMs: duration },
-        'Scheduled sync completed successfully',
+        'Scheduled sync completed successfully - all role changes applied',
       );
 
-      // Schedule next sync
-      this.syncTimer = setTimeout(() => this.runSync(), this.syncIntervalMs);
+      // If sync took longer than our interval, log a warning
+      if (duration > this.syncIntervalMs) {
+        log.warn(
+          { durationMs: duration, intervalMs: this.syncIntervalMs },
+          'Sync operation took longer than the configured interval',
+        );
+      }
     } catch (error) {
       logError(log, 'Error during scheduled sync', error);
 
-      // Schedule retry sooner than the normal interval
-      this.syncTimer = setTimeout(() => this.runSync(), SYNC_ERROR_RETRY_MS);
+      // We don't need to schedule another sync here since we're using setInterval
     }
   }
 

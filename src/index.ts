@@ -21,7 +21,6 @@ serve(
     port: 3000,
   },
   (info) => {
-    console.log('process.env.DISCORD_TOKEN', process.env.DISCORD_TOKEN);
     console.log(`Server is running on http://localhost:${info.port}`);
   },
 );

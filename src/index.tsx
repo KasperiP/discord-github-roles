@@ -6,11 +6,12 @@ import { authRoutes } from './routes/auth';
 import { PrismaClient } from '@prisma/client';
 import { jsxRenderer } from 'hono/jsx-renderer';
 import { IndexPage } from './pages/IndexPage';
-import { getCookie, setCookie } from 'hono/cookie';
+import { getCookie } from 'hono/cookie';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { createChildLogger, logError } from './utils/logger';
 import { config } from './config/config';
 import { Scheduler } from './scheduler/scheduler';
+import { verifyToken } from './utils/jwt';
 
 const log = createChildLogger('app');
 
@@ -44,12 +45,20 @@ app.route('', authRoutes);
 
 // Home page route
 app.get('/', async (c) => {
-  const userId = getCookie(c, 'user_id');
+  const authToken = getCookie(c, 'auth_token');
   
-  if (!userId) {
+  if (!authToken) {
     log.debug('Home page accessed by unauthenticated user');
     return c.render(<IndexPage user={null} />);
   }
+  
+  const payload = verifyToken(authToken);
+  if (!payload) {
+    log.debug('Home page accessed with invalid token');
+    return c.render(<IndexPage user={null} />);
+  }
+  
+  const userId = payload.userId;
 
   try {
     const user = await prisma.user.findUnique({
@@ -77,14 +86,7 @@ app.get('/', async (c) => {
         hasGithub: !!user.gitHubAccount 
       }, 'Home page accessed by authenticated user');
     } else {
-      log.warn({ userId }, 'Home page accessed with invalid user ID');
-      // Clear invalid session
-      setCookie(c, 'user_id', '', {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        path: '/',
-        maxAge: 0,
-      });
+      log.warn({ userId }, 'Home page accessed with valid token but invalid user ID');
     }
     
     return c.render(<IndexPage user={user} />);
@@ -102,14 +104,9 @@ app.get('/', async (c) => {
   }
 });
 
-if (!process.env.DISCORD_TOKEN) {
-  log.error('DISCORD_TOKEN environment variable not set');
-  throw new Error('DISCORD_TOKEN is required');
-}
-
 // Create and initialize the Discord bot
 try {
-  const client = createBot(process.env.DISCORD_TOKEN);
+  const client = createBot(config.discord.token);
   
   // Initialize scheduler when the client is ready
   client.once('ready', () => {

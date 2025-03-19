@@ -4,6 +4,7 @@ import { nanoid } from 'nanoid';
 import { prisma } from '../index';
 import { config } from '../config/config';
 import { createChildLogger, logError } from '../utils/logger';
+import { generateToken, verifyToken } from '../utils/jwt';
 
 // Create a logger instance for the auth component
 const log = createChildLogger('auth');
@@ -16,15 +17,20 @@ const GITHUB_API_URL = 'https://github.com';
 const GITHUB_API_VERSION = 'v3';
 const REDIRECT_URI_BASE = config.baseUrl;
 
+// Set secure cookie options
+const getSecureCookieOptions = (maxAge: number = 60 * 60 * 24 * 7) => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  path: '/',
+  maxAge,
+});
+
 // Discord OAuth endpoints
 authRoutes.get('/auth/discord', async (c) => {
   // Generate and store state for CSRF protection
   const state = nanoid();
   setCookie(c, 'discord_oauth_state', state, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-    maxAge: 60 * 10, // 10 minutes
+    ...getSecureCookieOptions(60 * 10), // 10 minutes
   });
 
   const params = new URLSearchParams({
@@ -42,7 +48,16 @@ authRoutes.get('/auth/discord', async (c) => {
 authRoutes.get('/auth/discord/callback', async (c) => {
   const { code, state } = c.req.query();
   const storedState = getCookie(c, 'discord_oauth_state');
-  const userId = getCookie(c, 'user_id');
+  const authToken = getCookie(c, 'auth_token');
+  let userId: string | null = null;
+
+  // Check if user is already authenticated
+  if (authToken) {
+    const payload = verifyToken(authToken);
+    if (payload) {
+      userId = payload.userId;
+    }
+  }
 
   const callbackLog = log.child({
     state,
@@ -137,19 +152,15 @@ authRoutes.get('/auth/discord/callback', async (c) => {
         },
       });
 
-      // Set user ID in cookie
-      setCookie(c, 'user_id', existingDiscordAccount.userId, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        path: '/',
-        maxAge: 60 * 60 * 24 * 7, // 1 week
-      });
+      // Generate JWT token and set in cookie
+      const token = generateToken(existingDiscordAccount.userId);
+      setCookie(c, 'auth_token', token, getSecureCookieOptions());
 
       userLog.info('Successfully logged in with existing Discord account');
       return c.redirect('/');
     }
 
-    // Case 2: User already logged in (has userId cookie) - link Discord to existing account
+    // Case 2: User already logged in (has userId) - link Discord to existing account
     if (userId) {
       // Check if the user exists
       const existingUser = await prisma.user.findUnique({
@@ -158,11 +169,8 @@ authRoutes.get('/auth/discord/callback', async (c) => {
 
       if (!existingUser) {
         // Clear invalid session
-        setCookie(c, 'user_id', '', {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          path: '/',
-          maxAge: 0,
+        setCookie(c, 'auth_token', '', {
+          ...getSecureCookieOptions(0),
         });
 
         return c.text('Invalid user session. Please try again.', 400);
@@ -192,13 +200,9 @@ authRoutes.get('/auth/discord/callback', async (c) => {
       },
     });
 
-    // Set user ID in cookie
-    setCookie(c, 'user_id', newUser.id, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 7, // 1 week
-    });
+    // Generate JWT token and set in cookie
+    const token = generateToken(newUser.id);
+    setCookie(c, 'auth_token', token, getSecureCookieOptions());
 
     return c.redirect('/');
   } catch (error) {
@@ -212,10 +216,7 @@ authRoutes.get('/auth/github', async (c) => {
   // Generate and store state for CSRF protection
   const state = nanoid();
   setCookie(c, 'github_oauth_state', state, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-    maxAge: 60 * 10, // 10 minutes
+    ...getSecureCookieOptions(60 * 10), // 10 minutes
   });
 
   const params = new URLSearchParams({
@@ -233,10 +234,26 @@ authRoutes.get('/auth/github', async (c) => {
 authRoutes.get('/auth/github/callback', async (c) => {
   const { code, state } = c.req.query();
   const storedState = getCookie(c, 'github_oauth_state');
-  const userId = getCookie(c, 'user_id');
+  const authToken = getCookie(c, 'auth_token');
+  let userId: null | string = null;
+
+  // Check if user is already authenticated
+  if (authToken) {
+    const payload = verifyToken(authToken);
+    if (payload) {
+      userId = payload.userId;
+    }
+  }
+
+  const callbackLog = log.child({
+    state,
+    hasStoredState: !!storedState,
+    hasExistingUserId: !!userId,
+  });
 
   // Validate state to prevent CSRF attacks
   if (!state || !storedState || state !== storedState) {
+    callbackLog.warn('Invalid state parameter in GitHub callback');
     return c.text('Invalid state parameter', 400);
   }
 
@@ -262,7 +279,7 @@ authRoutes.get('/auth/github/callback', async (c) => {
 
     if (!tokenResponse.ok) {
       const errorData = await tokenResponse.text();
-      console.error('GitHub token error:', errorData);
+      logError(callbackLog, 'GitHub token error:', new Error(errorData));
       return c.text('Failed to exchange code for token', 500);
     }
 
@@ -278,10 +295,23 @@ authRoutes.get('/auth/github/callback', async (c) => {
     });
 
     if (!userResponse.ok) {
+      logError(
+        callbackLog,
+        'Failed to get user info from GitHub',
+        new Error('API Error'),
+        {
+          status: userResponse.status,
+        },
+      );
       return c.text('Failed to get user info', 500);
     }
 
     const userData = await userResponse.json();
+    const userLog = callbackLog.child({
+      githubId: userData.id,
+      githubUsername: userData.login,
+    });
+    userLog.info('Retrieved GitHub user data');
 
     // Check if GitHub account already exists
     const existingGithubAccount = await prisma.gitHubAccount.findUnique({
@@ -291,6 +321,10 @@ authRoutes.get('/auth/github/callback', async (c) => {
 
     // Case 1: GitHub account exists - login to that account
     if (existingGithubAccount) {
+      userLog.info(
+        { existingUserId: existingGithubAccount.userId },
+        'Found existing GitHub account',
+      );
       // Update the GitHub account with fresh username if needed
       await prisma.gitHubAccount.update({
         where: { id: existingGithubAccount.id },
@@ -300,18 +334,15 @@ authRoutes.get('/auth/github/callback', async (c) => {
         },
       });
 
-      // Set user ID in cookie
-      setCookie(c, 'user_id', existingGithubAccount.userId, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        path: '/',
-        maxAge: 60 * 60 * 24 * 7, // 1 week
-      });
+      // Generate JWT token and set in cookie
+      const token = generateToken(existingGithubAccount.userId);
+      setCookie(c, 'auth_token', token, getSecureCookieOptions());
 
+      userLog.info('Successfully logged in with existing GitHub account');
       return c.redirect('/');
     }
 
-    // Case 2: User already logged in (has userId cookie) - link GitHub to existing account
+    // Case 2: User already logged in (has userId) - link GitHub to existing account
     if (userId) {
       // Check if the user exists
       const existingUser = await prisma.user.findUnique({
@@ -320,11 +351,8 @@ authRoutes.get('/auth/github/callback', async (c) => {
 
       if (!existingUser) {
         // Clear invalid session
-        setCookie(c, 'user_id', '', {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          path: '/',
-          maxAge: 0,
+        setCookie(c, 'auth_token', '', {
+          ...getSecureCookieOptions(0),
         });
 
         return c.text('Invalid user session. Please try again.', 400);
@@ -354,28 +382,30 @@ authRoutes.get('/auth/github/callback', async (c) => {
       },
     });
 
-    // Set user ID in cookie
-    setCookie(c, 'user_id', newUser.id, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      path: '/',
-      maxAge: 60 * 60 * 24 * 7, // 1 week
-    });
+    // Generate JWT token and set in cookie
+    const token = generateToken(newUser.id);
+    setCookie(c, 'auth_token', token, getSecureCookieOptions());
 
     return c.redirect('/');
   } catch (error) {
-    console.error('GitHub OAuth error:', error);
+    logError(callbackLog, 'GitHub OAuth error', error);
     return c.text('Authentication failed', 500);
   }
 });
 
 // Endpoint to unlink all accounts (sign out)
 authRoutes.post('/auth/unlink', async (c) => {
-  const userId = getCookie(c, 'user_id');
-
-  if (!userId) {
+  const authToken = getCookie(c, 'auth_token');
+  if (!authToken) {
     return c.text('Not authenticated', 401);
   }
+
+  const payload = verifyToken(authToken);
+  if (!payload) {
+    return c.text('Invalid authentication token', 401);
+  }
+
+  const userId = payload.userId;
 
   try {
     // Delete the entire user record - cascading delete will remove associated accounts
@@ -384,16 +414,13 @@ authRoutes.post('/auth/unlink', async (c) => {
     });
 
     // Clear session
-    setCookie(c, 'user_id', '', {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      path: '/',
-      maxAge: 0,
+    setCookie(c, 'auth_token', '', {
+      ...getSecureCookieOptions(0),
     });
 
     return c.redirect('/');
   } catch (error) {
-    console.error('Error unlinking accounts:', error);
+    logError(log, 'Error unlinking accounts', error);
     return c.text('Failed to unlink accounts', 500);
   }
 });
@@ -401,11 +428,8 @@ authRoutes.post('/auth/unlink', async (c) => {
 // Simple logout without deleting accounts
 authRoutes.get('/auth/logout', async (c) => {
   // Clear session cookie
-  setCookie(c, 'user_id', '', {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    path: '/',
-    maxAge: 0,
+  setCookie(c, 'auth_token', '', {
+    ...getSecureCookieOptions(0),
   });
 
   return c.redirect('/');
@@ -413,11 +437,21 @@ authRoutes.get('/auth/logout', async (c) => {
 
 // Endpoint to check current auth status
 authRoutes.get('/auth/status', async (c) => {
-  const userId = getCookie(c, 'user_id');
-
-  if (!userId) {
+  const authToken = getCookie(c, 'auth_token');
+  if (!authToken) {
     return c.json({ authenticated: false });
   }
+
+  const payload = verifyToken(authToken);
+  if (!payload) {
+    // Clear invalid token
+    setCookie(c, 'auth_token', '', {
+      ...getSecureCookieOptions(0),
+    });
+    return c.json({ authenticated: false });
+  }
+
+  const userId = payload.userId;
 
   try {
     const user = await prisma.user.findUnique({
@@ -440,11 +474,8 @@ authRoutes.get('/auth/status', async (c) => {
 
     if (!user) {
       // Clear invalid session
-      setCookie(c, 'user_id', '', {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        path: '/',
-        maxAge: 0,
+      setCookie(c, 'auth_token', '', {
+        ...getSecureCookieOptions(0),
       });
 
       return c.json({ authenticated: false });
@@ -466,7 +497,7 @@ authRoutes.get('/auth/status', async (c) => {
         : null,
     });
   } catch (error) {
-    console.error('Error checking auth status:', error);
+    logError(log, 'Error checking auth status', error);
     return c.json(
       { authenticated: false, error: 'Failed to check auth status' },
       500,

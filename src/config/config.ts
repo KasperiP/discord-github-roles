@@ -15,6 +15,9 @@ export const config = {
       ? parseInt(process.env.SYNC_INTERVAL_HOURS)
       : 6,
   },
+  jwt: {
+    secret: process.env.JWT_SECRET || '',
+  },
 };
 
 function validateConfig() {

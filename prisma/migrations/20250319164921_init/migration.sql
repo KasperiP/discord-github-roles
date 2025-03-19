@@ -61,37 +61,6 @@ CREATE TABLE "GuildSyncHistory" (
     CONSTRAINT "GuildSyncHistory_guildConfigId_fkey" FOREIGN KEY ("guildConfigId") REFERENCES "GuildConfig" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
--- CreateTable
-CREATE TABLE "RepositorySyncState" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "repositoryFullName" TEXT NOT NULL,
-    "lastContributorSync" DATETIME,
-    "lastStargazerSync" DATETIME,
-    "contributorEtag" TEXT,
-    "stargazerEtag" TEXT,
-    "lastSyncError" TEXT
-);
-
--- CreateTable
-CREATE TABLE "ContributorCache" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "repositoryFullName" TEXT NOT NULL,
-    "username" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "ContributorCache_repositoryFullName_fkey" FOREIGN KEY ("repositoryFullName") REFERENCES "RepositorySyncState" ("repositoryFullName") ON DELETE CASCADE ON UPDATE CASCADE
-);
-
--- CreateTable
-CREATE TABLE "StargazerCache" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "repositoryFullName" TEXT NOT NULL,
-    "username" TEXT NOT NULL,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "StargazerCache_repositoryFullName_fkey" FOREIGN KEY ("repositoryFullName") REFERENCES "RepositorySyncState" ("repositoryFullName") ON DELETE CASCADE ON UPDATE CASCADE
-);
-
 -- CreateIndex
 CREATE UNIQUE INDEX "GitHubAccount_githubId_key" ON "GitHubAccount"("githubId");
 
@@ -109,18 +78,3 @@ CREATE UNIQUE INDEX "GuildConfig_guildId_key" ON "GuildConfig"("guildId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "FollowedRepository_guildConfigId_owner_name_key" ON "FollowedRepository"("guildConfigId", "owner", "name");
-
--- CreateIndex
-CREATE UNIQUE INDEX "RepositorySyncState_repositoryFullName_key" ON "RepositorySyncState"("repositoryFullName");
-
--- CreateIndex
-CREATE INDEX "ContributorCache_repositoryFullName_idx" ON "ContributorCache"("repositoryFullName");
-
--- CreateIndex
-CREATE INDEX "ContributorCache_username_idx" ON "ContributorCache"("username");
-
--- CreateIndex
-CREATE INDEX "StargazerCache_repositoryFullName_idx" ON "StargazerCache"("repositoryFullName");
-
--- CreateIndex
-CREATE INDEX "StargazerCache_username_idx" ON "StargazerCache"("username");

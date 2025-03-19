@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import { nanoid } from 'nanoid';
 import { prisma } from '../index';
 import { config } from '../config/config';
 import { createChildLogger, logError } from '../utils/logger';
@@ -28,7 +27,7 @@ const getSecureCookieOptions = (maxAge: number = 60 * 60 * 24 * 7) => ({
 // Discord OAuth endpoints
 authRoutes.get('/auth/discord', async (c) => {
   // Generate and store state for CSRF protection
-  const state = nanoid();
+  const state = crypto.randomUUID();
   setCookie(c, 'discord_oauth_state', state, {
     ...getSecureCookieOptions(60 * 10), // 10 minutes
   });
@@ -214,7 +213,7 @@ authRoutes.get('/auth/discord/callback', async (c) => {
 // GitHub OAuth endpoints
 authRoutes.get('/auth/github', async (c) => {
   // Generate and store state for CSRF protection
-  const state = nanoid();
+  const state = crypto.randomUUID();
   setCookie(c, 'github_oauth_state', state, {
     ...getSecureCookieOptions(60 * 10), // 10 minutes
   });

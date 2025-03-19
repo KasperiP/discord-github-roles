@@ -25,7 +25,6 @@ export class RoleSyncService {
       // Get all configured guilds
       const guildConfigs = await prisma.guildConfig.findMany({
         where: {
-          // Only get guilds with at least one role type configured and at least one repository
           OR: [
             { contributorRoleId: { not: null } },
             { stargazerRoleId: { not: null } },
@@ -91,41 +90,10 @@ export class RoleSyncService {
         throw new Error(`Guild not found in Discord: ${guildConfig.guildId}`);
       }
 
-      // Check if the bot has necessary permissions
+      // Make sure we have permission to manage roles
       const botMember = await guild.members.fetchMe();
       if (!botMember.permissions.has('ManageRoles')) {
-        throw new Error(
-          'Bot does not have "Manage Roles" permission in this guild',
-        );
-      }
-
-      // Check if the bot can assign the configured roles
-      if (guildConfig.contributorRoleId) {
-        const contributorRole = guild.roles.cache.get(
-          guildConfig.contributorRoleId,
-        );
-        if (!contributorRole) {
-          guildLog.warn('Configured contributor role not found in guild');
-        } else if (
-          botMember.roles.highest.position <= contributorRole.position
-        ) {
-          guildLog.warn(
-            'Bot cannot assign the contributor role (higher position)',
-          );
-        }
-      }
-
-      if (guildConfig.stargazerRoleId) {
-        const stargazerRole = guild.roles.cache.get(
-          guildConfig.stargazerRoleId,
-        );
-        if (!stargazerRole) {
-          guildLog.warn('Configured stargazer role not found in guild');
-        } else if (botMember.roles.highest.position <= stargazerRole.position) {
-          guildLog.warn(
-            'Bot cannot assign the stargazer role (higher position)',
-          );
-        }
+        throw new Error('Bot does not have "Manage Roles" permission');
       }
 
       // Get all Discord users with connected GitHub accounts
@@ -149,170 +117,52 @@ export class RoleSyncService {
         'Found linked Discord-GitHub accounts',
       );
 
-      // Fetch all repositories data once to avoid repeated API calls
+      // Fetch all repositories data
       const repoDataMap = new Map();
 
       // Process all repositories and gather data
       for (const repo of guildConfig.repositories) {
         try {
           const repoFullName = `${repo.owner}/${repo.name}`;
+          let contributors: string[] = [];
+          let stargazers: string[] = [];
 
-          // Get repository sync state
-          let syncState = await prisma.repositorySyncState.findUnique({
-            where: { repositoryFullName: repoFullName },
-          });
-
-          // Create the repository sync state record if it doesn't exist
-          if (!syncState) {
-            syncState = await prisma.repositorySyncState.create({
-              data: {
-                repositoryFullName: repoFullName,
-              },
-            });
-          }
-
-          // Get contributors
-          let contributors: string[] | null = [];
-          let contributorEtag: string | null = syncState.contributorEtag;
-
+          // Get contributors if needed
           if (guildConfig.contributorRoleId) {
-            const {
-              contributors: repoContributors,
-              etag: newEtag,
-              notModified,
-            } = await this.githubClient.getRepositoryContributors(
-              repo.owner,
-              repo.name,
-              syncState.contributorEtag || undefined,
-            );
-
-            // If data hasn't changed, need to get the cached data from database
-            if (notModified) {
-              // Fetch previously synced contributors from database
-              const cachedRepo = await prisma.repositorySyncState.findUnique({
-                where: { repositoryFullName: repoFullName },
-                include: { cachedContributors: true },
-              });
-
-              // Use cached contributors if available
-              contributors =
-                cachedRepo?.cachedContributors.map((c) => c.username) || [];
-              guildLog.info(
-                { repo: repoFullName, count: contributors.length },
-                'Using cached contributors data (not modified since last sync)',
+            const { contributors: repoContributors } =
+              await this.githubClient.getRepositoryContributors(
+                repo.owner,
+                repo.name,
               );
-            } else {
-              contributors = repoContributors || [];
-
-              // Update cached contributors in database
-              if (contributors.length > 0) {
-                // First delete existing cached contributors
-                await prisma.contributorCache.deleteMany({
-                  where: { repositoryFullName: repoFullName },
-                });
-
-                // Then create new ones
-                for (const username of contributors) {
-                  await prisma.contributorCache.create({
-                    data: {
-                      username,
-                      repositoryFullName: repoFullName,
-                    },
-                  });
-                }
-              }
-            }
-            contributorEtag = newEtag || null;
+            contributors = repoContributors || [];
+            guildLog.info(
+              { repo: repoFullName, count: contributors.length },
+              'Retrieved repository contributors',
+            );
           }
 
-          // Get stargazers
-          let stargazers: string[] | null = [];
-          let stargazerEtag: string | null = syncState.stargazerEtag;
-
+          // Get stargazers if needed
           if (guildConfig.stargazerRoleId) {
-            const {
-              stargazers: repoStargazers,
-              etag: newEtag,
-              notModified,
-            } = await this.githubClient.getRepositoryStargazers(
-              repo.owner,
-              repo.name,
-              syncState.stargazerEtag || undefined,
-            );
-
-            // If data hasn't changed, need to get the cached data from database
-            if (notModified) {
-              // Fetch previously synced stargazers from database
-              const cachedRepo = await prisma.repositorySyncState.findUnique({
-                where: { repositoryFullName: repoFullName },
-                include: { cachedStargazers: true },
-              });
-
-              // Use cached stargazers if available
-              stargazers =
-                cachedRepo?.cachedStargazers.map((s) => s.username) || [];
-              guildLog.info(
-                { repo: repoFullName, count: stargazers.length },
-                'Using cached stargazers data (not modified since last sync)',
+            const { stargazers: repoStargazers } =
+              await this.githubClient.getRepositoryStargazers(
+                repo.owner,
+                repo.name,
               );
-            } else {
-              stargazers = repoStargazers || [];
-
-              // Update cached stargazers in database
-              if (stargazers.length > 0) {
-                // First delete existing cached stargazers
-                await prisma.stargazerCache.deleteMany({
-                  where: { repositoryFullName: repoFullName },
-                });
-
-                // Then create new ones
-                for (const username of stargazers) {
-                  await prisma.stargazerCache.create({
-                    data: {
-                      username,
-                      repositoryFullName: repoFullName,
-                    },
-                  });
-                }
-              }
-            }
-            stargazerEtag = newEtag || null;
+            stargazers = repoStargazers || [];
+            guildLog.info(
+              { repo: repoFullName, count: stargazers.length },
+              'Retrieved repository stargazers',
+            );
           }
 
           // Store the data
           repoDataMap.set(repoFullName, { contributors, stargazers });
-
-          // Update sync state
-          await prisma.repositorySyncState.update({
-            where: { repositoryFullName: repoFullName },
-            data: {
-              lastContributorSync: contributors ? new Date() : undefined,
-              lastStargazerSync: stargazers ? new Date() : undefined,
-              contributorEtag,
-              stargazerEtag,
-              lastSyncError: null,
-            },
-          });
         } catch (error) {
           logError(
             guildLog,
             `Error fetching data for repo ${repo.owner}/${repo.name}`,
             error,
           );
-
-          // Update sync state with error
-          await prisma.repositorySyncState.upsert({
-            where: { repositoryFullName: `${repo.owner}/${repo.name}` },
-            update: {
-              lastSyncError:
-                error instanceof Error ? error.message : String(error),
-            },
-            create: {
-              repositoryFullName: `${repo.owner}/${repo.name}`,
-              lastSyncError:
-                error instanceof Error ? error.message : String(error),
-            },
-          });
         }
       }
 
@@ -408,10 +258,7 @@ export class RoleSyncService {
     member: GuildMember,
     githubUsername: string,
     guildConfig: GuildConfig & { repositories: FollowedRepository[] },
-    repoDataMap: Map<
-      string,
-      { contributors: string[] | null; stargazers: string[] | null }
-    >,
+    repoDataMap: Map<string, { contributors: string[]; stargazers: string[] }>,
   ): Promise<{ added: number; removed: number }> {
     let added = 0;
     let removed = 0;
@@ -478,10 +325,7 @@ export class RoleSyncService {
     member: GuildMember,
     githubUsername: string,
     guildConfig: GuildConfig & { repositories: FollowedRepository[] },
-    repoDataMap: Map<
-      string,
-      { contributors: string[] | null; stargazers: string[] | null }
-    >,
+    repoDataMap: Map<string, { contributors: string[]; stargazers: string[] }>,
   ): Promise<{ added: number; removed: number }> {
     let added = 0;
     let removed = 0;
@@ -511,10 +355,6 @@ export class RoleSyncService {
     // Add role if needed
     if (isStargazer && !hasRole) {
       try {
-        log.debug(
-          { user: member.user.tag, githubUsername },
-          'Adding stargazer role - user stars at least one repository',
-        );
         await member.roles.add(stargazerRole, 'GitHub stargazer role sync');
         added = 1;
       } catch (error) {
@@ -528,10 +368,6 @@ export class RoleSyncService {
     // Remove role if needed
     else if (!isStargazer && hasRole) {
       try {
-        log.debug(
-          { user: member.user.tag, githubUsername },
-          'Removing stargazer role - user no longer stars any repositories',
-        );
         await member.roles.remove(stargazerRole, 'GitHub stargazer role sync');
         removed = 1;
       } catch (error) {

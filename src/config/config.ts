@@ -13,7 +13,7 @@ export const config = {
   scheduler: {
     syncIntervalHours: process.env.SYNC_INTERVAL_HOURS
       ? parseInt(process.env.SYNC_INTERVAL_HOURS)
-      : 6,
+      : 0.25, // Default to 15 minutes
   },
   jwt: {
     secret: process.env.JWT_SECRET || '',

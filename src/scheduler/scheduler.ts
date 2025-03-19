@@ -1,7 +1,6 @@
 import { Client } from 'discord.js';
 import { createChildLogger, logError } from '../utils/logger';
 import { RoleSyncService } from '../services/role-sync';
-import { config } from '../config/config';
 
 const log = createChildLogger('scheduler');
 
@@ -23,10 +22,7 @@ export class Scheduler {
       (syncIntervalHours || DEFAULT_SYNC_INTERVAL_HOURS) * 60 * 60 * 1000;
 
     // Create role sync service with GitHub token if available
-    this.roleSyncService = new RoleSyncService(
-      discordClient,
-      config.github.syncToken,
-    );
+    this.roleSyncService = new RoleSyncService(discordClient);
 
     log.info(
       { syncIntervalHours: syncIntervalHours || DEFAULT_SYNC_INTERVAL_HOURS },

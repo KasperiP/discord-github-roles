@@ -18,7 +18,7 @@ export class RoleSyncService {
   /**
    * Sync GitHub roles for all guilds
    */
-  async syncAllGuilds() {
+  public async syncAllGuilds() {
     try {
       log.info('Starting sync for all guilds');
 
@@ -59,7 +59,7 @@ export class RoleSyncService {
   /**
    * Sync GitHub roles for a specific guild
    */
-  async syncGuild(
+  private async syncGuild(
     guildConfig: GuildConfig & { repositories: FollowedRepository[] },
   ) {
     const guildLog = log.child({

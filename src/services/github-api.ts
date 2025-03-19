@@ -29,106 +29,75 @@ export class GitHubApiClient {
   }
 
   /**
-   * Make an API request to GitHub
+   * Get contributors for a repository
    */
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {},
-    etag?: string,
-  ): Promise<{ data: T | null; etag?: string; notModified: boolean }> {
-    const url = endpoint.startsWith('http')
-      ? endpoint
-      : `${this.baseUrl}${endpoint}`;
-
-    // Set headers for the request
-    const headers = { ...this.headers, ...options.headers };
-
-    // If we have an ETag, use it for conditional requests
-    if (etag) {
-      headers['If-None-Match'] = etag;
-    }
+  async getRepositoryContributors(owner: string, repo: string) {
+    const endpoint = `/repos/${owner}/${repo}/contributors`;
+    const url = `${this.baseUrl}${endpoint}`;
 
     try {
       log.debug({ endpoint }, 'Making GitHub API request');
 
       const response = await fetch(url, {
-        ...options,
-        headers,
+        headers: {
+          ...this.headers,
+          Accept: 'application/vnd.github.v3+json',
+        },
       });
 
-      const responseEtag = response.headers.get('ETag') || undefined;
-
-      // Handle 304 Not Modified (when using etags)
-      if (response.status === 304) {
-        log.debug({ endpoint }, 'Resource not modified since last request');
-        return { data: null, etag: responseEtag, notModified: true };
+      // Handle response errors
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(`GitHub API error: ${response.status} - ${errorData}`);
       }
 
-      // Handle successful responses
-      if (response.ok) {
-        let data = null;
-
-        // Only try to parse JSON if the response has content
-        const contentLength = response.headers.get('content-length');
-        if (contentLength !== '0') {
-          data = await response.json();
-        }
-
-        return { data, etag: responseEtag, notModified: false };
-      }
-
-      // Handle error responses
-      const errorData = await response.text();
-      log.error(
-        {
-          endpoint,
-          status: response.status,
-          error: errorData,
-        },
-        'GitHub API error response',
-      );
-
-      throw new Error(`GitHub API error: ${response.status} - ${errorData}`);
-    } catch (error) {
-      logError(log, `GitHub API request failed for ${endpoint}`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get contributors for a repository
-   */
-  async getRepositoryContributors(owner: string, repo: string, etag?: string) {
-    const endpoint = `/repos/${owner}/${repo}/contributors`;
-
-    try {
-      const {
-        data,
-        etag: newEtag,
-        notModified,
-      } = await this.request<GitHubContributor[]>(
-        endpoint,
-        {
-          headers: {
-            Accept: 'application/vnd.github.v3+json',
-          },
-        },
-        etag,
-      );
-
-      if (notModified) {
-        log.info({ owner, repo }, 'Contributors not modified since last sync');
-        return { contributors: null, etag: newEtag, notModified };
-      }
+      // Get the data from the response
+      const data = (await response.json()) as GitHubContributor[];
 
       // Map to an array of usernames/logins
-      const contributors = data?.map((user) => user.login.toLowerCase()) || [];
+      let contributors = data?.map((user) => user.login.toLowerCase()) || [];
+
+      // Handle pagination to ensure we get ALL contributors
+      let nextUrl = this.getNextPageUrl(response.headers.get('Link'));
+      while (nextUrl) {
+        log.debug(
+          { owner, repo, nextUrl },
+          'Fetching next page of contributors',
+        );
+
+        const nextResponse = await fetch(nextUrl, {
+          headers: this.headers,
+        });
+
+        if (!nextResponse.ok) {
+          const errorData = await nextResponse.text();
+          throw new Error(
+            `GitHub API error: ${nextResponse.status} - ${errorData}`,
+          );
+        }
+
+        const nextData = (await nextResponse.json()) as GitHubContributor[];
+
+        if (nextData && nextData.length > 0) {
+          // Add contributors from this page
+          contributors = [
+            ...contributors,
+            ...nextData.map((user) => user.login.toLowerCase()),
+          ];
+
+          // Get next page URL
+          nextUrl = this.getNextPageUrl(nextResponse.headers.get('Link'));
+        } else {
+          break;
+        }
+      }
+
       log.info(
         { owner, repo, count: contributors.length },
         'Retrieved repository contributors',
       );
 
-      return { contributors, etag: newEtag, notModified: false };
+      return { contributors };
     } catch (error) {
       logError(log, `Failed to get contributors for ${owner}/${repo}`, error);
       throw error;
@@ -138,7 +107,7 @@ export class GitHubApiClient {
   /**
    * Get stargazers for a repository with pagination support
    */
-  async getRepositoryStargazers(owner: string, repo: string, etag?: string) {
+  async getRepositoryStargazers(owner: string, repo: string) {
     const endpoint = `/repos/${owner}/${repo}/stargazers`;
 
     try {
@@ -147,19 +116,10 @@ export class GitHubApiClient {
           ...this.headers,
           // Request for simple stargazer list
           Accept: 'application/vnd.github.v3.star+json',
-          ...(etag ? { 'If-None-Match': etag } : {}),
         },
       });
 
-      const responseEtag = response.headers.get('ETag') || undefined;
-
-      // Handle 304 Not Modified (when using etags)
-      if (response.status === 304) {
-        log.info({ owner, repo }, 'Stargazers not modified since last sync');
-        return { stargazers: null, etag: responseEtag, notModified: true };
-      }
-
-      // Handle other response errors
+      // Handle response errors
       if (!response.ok) {
         const errorData = await response.text();
         throw new Error(`GitHub API error: ${response.status} - ${errorData}`);
@@ -208,7 +168,7 @@ export class GitHubApiClient {
         'Retrieved repository stargazers',
       );
 
-      return { stargazers, etag: responseEtag, notModified: false };
+      return { stargazers };
     } catch (error) {
       logError(log, `Failed to get stargazers for ${owner}/${repo}`, error);
       throw error;

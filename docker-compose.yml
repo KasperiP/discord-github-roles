@@ -1,5 +1,6 @@
 services:
   app:
+    container_name: discord-github-roles
     build:
       context: .
       dockerfile: Dockerfile

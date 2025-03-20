@@ -18,7 +18,7 @@ const log = createChildLogger('app');
 // Initialize Prisma client
 export const prisma = new PrismaClient();
 
-const app = new Hono();
+export const app = new Hono();
 
 // Serve static files from the public directory
 app.use('/*', serveStatic({ root: './public' }));
@@ -42,6 +42,12 @@ app.use(
 
 // Register auth routes
 app.route('', authRoutes);
+
+// Health check endpoint
+app.get('/api/health', (c) => {
+  log.info('Health check endpoint accessed');
+  return c.json({ status: 'ok' });
+});
 
 // Home page route
 app.get('/', async (c) => {

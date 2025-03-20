@@ -8,6 +8,8 @@ services:
       - "127.0.0.1:3420:3000"
     volumes:
       - ./prisma:/app/prisma
+    networks:
+      - lukittu-network
     environment:
       - NODE_ENV=production
       - DATABASE_URL=file:/app/prisma/data.db

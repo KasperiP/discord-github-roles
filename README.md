@@ -27,12 +27,14 @@ Automatically assign Discord roles based on GitHub contributions and stars! This
 ### Setup
 
 1. **Clone the repository**
+
    ```bash
    git clone https://github.com/KasperiP/discord-github-roles.git
    cd discord-github-roles
    ```
 
 2. **Install dependencies**
+
    ```bash
    pnpm install
    # or
@@ -40,32 +42,35 @@ Automatically assign Discord roles based on GitHub contributions and stars! This
    ```
 
 3. **Set up the environment**
-   
+
    Copy the `.example.env` file to `.env`:
+
    ```bash
    cp .example.env .env
    ```
-   
+
    Then update it with your credentials:
+
    ```
    DATABASE_URL="file:./dev.db"
-   
+
    DISCORD_TOKEN=YOUR_DISCORD_TOKEN_HERE
-   
+
    # OAuth credentials
    DISCORD_CLIENT_ID=YOUR_DISCORD_CLIENT_ID_HERE
    DISCORD_CLIENT_SECRET=YOUR_DISCORD_CLIENT_SECRET_HERE
-   
+
    GITHUB_CLIENT_ID=YOUR_GITHUB_CLIENT_ID_HERE
    GITHUB_CLIENT_SECRET=YOUR_GITHUB_CLIENT_SECRET_HERE
-   
+
    BASE_URL=http://localhost:3000
-   
+
    NODE_ENV=development
    JWT_SECRET=YOUR_JWT_SECRET_HERE
    ```
 
 4. **Set up the database**
+
    ```bash
    pnpm gen
    # or
@@ -73,10 +78,11 @@ Automatically assign Discord roles based on GitHub contributions and stars! This
    ```
 
 5. **Build and start the application**
+
    ```bash
    # Development mode
    pnpm dev
-   
+
    # Production mode
    pnpm build && pnpm start
    ```
@@ -137,4 +143,3 @@ Contributions are welcome! Feel free to open an issue or submit a pull request.
 ## 📄 License
 
 This project is licensed under the MIT License.
-

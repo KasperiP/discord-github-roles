@@ -8,9 +8,12 @@ import {
   PermissionFlagsBits,
   ChatInputCommandInteraction,
   MessageFlags,
+  ActivityType,
+  PresenceData,
 } from 'discord.js';
 import { prisma } from '../index';
 import { createChildLogger, logError } from '../utils/logger';
+import { config } from '../config/config';
 
 const log = createChildLogger('bot');
 
@@ -106,6 +109,69 @@ export function createBot(token: string) {
       { username: readyClient.user.tag },
       `Ready! Logged in as ${readyClient.user.tag}`,
     );
+
+    // Set custom status if configured
+    if (config.discord.botStatus.text) {
+      try {
+        const statusType = config.discord.botStatus.type.toUpperCase();
+        // Map string to ActivityType enum
+        let activityType: ActivityType;
+
+        switch (statusType) {
+          case 'PLAYING':
+            activityType = ActivityType.Playing;
+            break;
+          case 'STREAMING':
+            activityType = ActivityType.Streaming;
+            break;
+          case 'LISTENING':
+            activityType = ActivityType.Listening;
+            break;
+          case 'WATCHING':
+            activityType = ActivityType.Watching;
+            break;
+          case 'COMPETING':
+            activityType = ActivityType.Competing;
+            break;
+          default:
+            activityType = ActivityType.Watching;
+            log.warn(
+              { configuredType: statusType },
+              `Invalid status type provided. Using WATCHING instead.`,
+            );
+        }
+
+        const presence = {
+          activities: [
+            {
+              name: config.discord.botStatus.text,
+              type: activityType,
+              url:
+                statusType === 'STREAMING'
+                  ? config.discord.botStatus.url || null
+                  : null,
+            },
+          ],
+          status: 'online',
+        } as PresenceData;
+
+        await readyClient.user.setPresence(presence);
+
+        log.info(
+          {
+            statusType,
+            statusText: config.discord.botStatus.text,
+            statusUrl:
+              statusType === 'STREAMING'
+                ? config.discord.botStatus.url
+                : undefined,
+          },
+          'Bot status set successfully',
+        );
+      } catch (error) {
+        logError(log, 'Failed to set bot status', error);
+      }
+    }
 
     // Register slash commands with Discord API
     const rest = new REST({ version: '10' }).setToken(token);

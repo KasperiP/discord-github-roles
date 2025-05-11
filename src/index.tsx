@@ -30,14 +30,17 @@ app.use(
       <html lang="en">
         <head>
           <meta charset="UTF-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1.0"
+          />
           <title>GitHub & Discord Linking</title>
           <link rel="stylesheet" href="/styles.css" />
         </head>
         <body>{children}</body>
       </html>
     );
-  })
+  }),
 );
 
 // Register auth routes
@@ -52,18 +55,18 @@ app.get('/api/health', (c) => {
 // Home page route
 app.get('/', async (c) => {
   const authToken = getCookie(c, 'auth_token');
-  
+
   if (!authToken) {
     log.debug('Home page accessed by unauthenticated user');
     return c.render(<IndexPage user={null} />);
   }
-  
+
   const payload = verifyToken(authToken);
   if (!payload) {
     log.debug('Home page accessed with invalid token');
     return c.render(<IndexPage user={null} />);
   }
-  
+
   const userId = payload.userId;
 
   try {
@@ -84,28 +87,40 @@ app.get('/', async (c) => {
         },
       },
     });
-    
+
     if (user) {
-      log.debug({ 
-        userId, 
-        hasDiscord: !!user.discordAccount, 
-        hasGithub: !!user.gitHubAccount 
-      }, 'Home page accessed by authenticated user');
+      log.debug(
+        {
+          userId,
+          hasDiscord: !!user.discordAccount,
+          hasGithub: !!user.gitHubAccount,
+        },
+        'Home page accessed by authenticated user',
+      );
     } else {
-      log.warn({ userId }, 'Home page accessed with valid token but invalid user ID');
+      log.warn(
+        { userId },
+        'Home page accessed with valid token but invalid user ID',
+      );
     }
-    
+
     return c.render(<IndexPage user={user} />);
   } catch (error) {
-    log.error({ 
-      userId, 
-      error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error)
-    }, 'Error fetching user data for home page');
+    log.error(
+      {
+        userId,
+        error:
+          error instanceof Error
+            ? { message: error.message, stack: error.stack }
+            : String(error),
+      },
+      'Error fetching user data for home page',
+    );
     return c.render(
-      <IndexPage 
-        user={null} 
+      <IndexPage
+        user={null}
         error="Failed to load user data. Please try again or contact support."
-      />
+      />,
     );
   }
 });
@@ -113,31 +128,37 @@ app.get('/', async (c) => {
 // Create and initialize the Discord bot
 try {
   const client = createBot(config.discord.token);
-  
+
   // Initialize scheduler when the client is ready
   client.once('ready', () => {
     try {
       // Create the scheduler with configured interval
       const scheduler = new Scheduler(
         client,
-        config.scheduler.syncIntervalHours
+        config.scheduler.syncIntervalHours,
       );
-      
+
       // Start the scheduler
       scheduler.start();
-      
+
       log.info(
         { syncIntervalHours: config.scheduler.syncIntervalHours },
-        'Role sync scheduler started'
+        'Role sync scheduler started',
       );
     } catch (error) {
       logError(log, 'Failed to initialize scheduler', error);
     }
   });
 } catch (error) {
-  log.fatal({ 
-    error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error)
-  }, 'Failed to initialize Discord bot');
+  log.fatal(
+    {
+      error:
+        error instanceof Error
+          ? { message: error.message, stack: error.stack }
+          : String(error),
+    },
+    'Failed to initialize Discord bot',
+  );
   process.exit(1);
 }
 
@@ -147,6 +168,9 @@ serve(
     port: 3000,
   },
   (info) => {
-    log.info({ port: info.port }, `Server is running on http://localhost:${info.port}`);
+    log.info(
+      { port: info.port },
+      `Server is running on http://localhost:${info.port}`,
+    );
   },
 );

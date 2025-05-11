@@ -3,6 +3,11 @@ export const config = {
     clientId: process.env.DISCORD_CLIENT_ID || '',
     clientSecret: process.env.DISCORD_CLIENT_SECRET || '',
     token: process.env.DISCORD_TOKEN || '',
+    botStatus: {
+      type: process.env.BOT_STATUS_TYPE || 'WATCHING', // Can be PLAYING, STREAMING, LISTENING, WATCHING, or COMPETING
+      text: process.env.BOT_STATUS_TEXT || '',
+      url: process.env.BOT_STATUS_URL || '', // Only used for STREAMING status
+    },
   },
   github: {
     clientId: process.env.GITHUB_CLIENT_ID || '',

@@ -128,8 +128,10 @@ export class GitHubApiClient {
       // Get the data from the response
       const data = (await response.json()) as GitHubStargazer[];
 
-      // Map to an array of usernames/logins
-      let stargazers = data.map((star) => star.user.login.toLowerCase()) || [];
+      let stargazers =
+        data
+          .filter((star) => star && star.user && star.user.login)
+          .map((star) => star.user.login.toLowerCase()) || [];
 
       // Handle pagination to ensure we get ALL stargazers
       let nextUrl = this.getNextPageUrl(response.headers.get('Link'));
@@ -150,10 +152,11 @@ export class GitHubApiClient {
         const nextData = (await nextResponse.json()) as GitHubStargazer[];
 
         if (nextData && nextData.length > 0) {
-          // Add stargazers from this page
           stargazers = [
             ...stargazers,
-            ...nextData.map((star) => star.user.login.toLowerCase()),
+            ...nextData
+              .filter((star) => star && star.user && star.user.login)
+              .map((star) => star.user.login.toLowerCase()),
           ];
 
           // Get next page URL

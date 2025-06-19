@@ -10,6 +10,7 @@ import {
   MessageFlags,
   ActivityType,
   PresenceData,
+  ClientUser,
 } from 'discord.js';
 import { prisma } from '../index';
 import { createChildLogger, logError } from '../utils/logger';
@@ -102,6 +103,71 @@ const commands = [
 
 export function createBot(token: string) {
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+  let statusInterval: NodeJS.Timeout | null = null;
+
+  // Extract status setting logic into a reusable function
+  const setCustomStatus = async (user: ClientUser) => {
+    if (!config.discord.botStatus.text) return;
+
+    try {
+      const statusType = config.discord.botStatus.type.toUpperCase();
+      let activityType: ActivityType;
+
+      switch (statusType) {
+        case 'PLAYING':
+          activityType = ActivityType.Playing;
+          break;
+        case 'STREAMING':
+          activityType = ActivityType.Streaming;
+          break;
+        case 'LISTENING':
+          activityType = ActivityType.Listening;
+          break;
+        case 'WATCHING':
+          activityType = ActivityType.Watching;
+          break;
+        case 'COMPETING':
+          activityType = ActivityType.Competing;
+          break;
+        default:
+          activityType = ActivityType.Watching;
+          log.warn(
+            { configuredType: statusType },
+            `Invalid status type provided. Using WATCHING instead.`,
+          );
+      }
+
+      const presence = {
+        activities: [
+          {
+            name: config.discord.botStatus.text,
+            type: activityType,
+            url:
+              statusType === 'STREAMING'
+                ? config.discord.botStatus.url || null
+                : null,
+          },
+        ],
+        status: 'online',
+      } as PresenceData;
+
+      await user.setPresence(presence);
+
+      log.debug(
+        {
+          statusType,
+          statusText: config.discord.botStatus.text,
+          statusUrl:
+            statusType === 'STREAMING'
+              ? config.discord.botStatus.url
+              : undefined,
+        },
+        'Bot status set successfully',
+      );
+    } catch (error) {
+      logError(log, 'Failed to set bot status', error);
+    }
+  };
 
   // Register commands when bot is ready
   client.once(Events.ClientReady, async (readyClient) => {
@@ -110,67 +176,21 @@ export function createBot(token: string) {
       `Ready! Logged in as ${readyClient.user.tag}`,
     );
 
-    // Set custom status if configured
+    // Set initial custom status
+    await setCustomStatus(readyClient.user);
+
+    // Set up interval to refresh status every hour (3600000 ms)
     if (config.discord.botStatus.text) {
-      try {
-        const statusType = config.discord.botStatus.type.toUpperCase();
-        // Map string to ActivityType enum
-        let activityType: ActivityType;
-
-        switch (statusType) {
-          case 'PLAYING':
-            activityType = ActivityType.Playing;
-            break;
-          case 'STREAMING':
-            activityType = ActivityType.Streaming;
-            break;
-          case 'LISTENING':
-            activityType = ActivityType.Listening;
-            break;
-          case 'WATCHING':
-            activityType = ActivityType.Watching;
-            break;
-          case 'COMPETING':
-            activityType = ActivityType.Competing;
-            break;
-          default:
-            activityType = ActivityType.Watching;
-            log.warn(
-              { configuredType: statusType },
-              `Invalid status type provided. Using WATCHING instead.`,
-            );
+      statusInterval = setInterval(async () => {
+        try {
+          await setCustomStatus(readyClient.user);
+          log.debug('Periodic status refresh completed');
+        } catch (error) {
+          logError(log, 'Failed to refresh bot status periodically', error);
         }
+      }, 3600000); // 1 hour
 
-        const presence = {
-          activities: [
-            {
-              name: config.discord.botStatus.text,
-              type: activityType,
-              url:
-                statusType === 'STREAMING'
-                  ? config.discord.botStatus.url || null
-                  : null,
-            },
-          ],
-          status: 'online',
-        } as PresenceData;
-
-        await readyClient.user.setPresence(presence);
-
-        log.info(
-          {
-            statusType,
-            statusText: config.discord.botStatus.text,
-            statusUrl:
-              statusType === 'STREAMING'
-                ? config.discord.botStatus.url
-                : undefined,
-          },
-          'Bot status set successfully',
-        );
-      } catch (error) {
-        logError(log, 'Failed to set bot status', error);
-      }
+      log.info('Status refresh interval set (every 1 hour)');
     }
 
     // Register slash commands with Discord API
@@ -194,6 +214,15 @@ export function createBot(token: string) {
   // Error handler for client
   client.on('error', (error) => {
     logError(log, 'Discord client error occurred', error);
+  });
+
+  // Clean up interval when client is destroyed
+  client.on('disconnect', () => {
+    if (statusInterval) {
+      clearInterval(statusInterval);
+      statusInterval = null;
+      log.info('Status refresh interval cleared');
+    }
   });
 
   // Handle interaction events (commands)
@@ -307,6 +336,11 @@ export function createBot(token: string) {
   // Add login error handling
   client.login(token).catch((error) => {
     logError(log, 'Failed to login to Discord', error);
+    // Clean up interval on login failure
+    if (statusInterval) {
+      clearInterval(statusInterval);
+      statusInterval = null;
+    }
     process.exit(1); // Exit the process on login failure
   });
 
